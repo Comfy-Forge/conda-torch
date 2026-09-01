@@ -1,0 +1,84 @@
+name: repack-torch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "torch version (e.g. 2.8.0)"
+        default: "2.8.0"
+      flavour:
+        description: "CUDA flavour (e.g. cu128)"
+        default: "cu128"
+      python:
+        description: "python minor (e.g. 3.12)"
+        default: "3.12"
+      platform:
+        description: "conda subdir"
+        default: "linux-64"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: repack-${{ inputs.version }}-${{ inputs.flavour }}-${{ inputs.python }}-${{ inputs.platform }}
+
+jobs:
+  repack:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python }}
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q patchelf zstd
+          pip install zstandard
+
+      - name: Repack
+        run: |
+          python tools/torch_repack.py \
+            --version "${{ inputs.version }}" \
+            --flavour "${{ inputs.flavour }}" \
+            --python "${{ inputs.python }}" \
+            --subdir "${{ inputs.platform }}" \
+            -o dist --work work
+          rm -rf work
+          ls -la dist/
+
+      - name: Upload to release
+        run: |
+          gh release create "${{ inputs.platform }}" \
+            --title "${{ inputs.platform }} packages" \
+            --notes "Storage release for ${{ inputs.platform }} subdir packages. Do not delete: repodata base_url points here." \
+            || true
+          gh release upload "${{ inputs.platform }}" dist/*.conda --clobber
+
+      - name: Commit repodata fragments
+        run: |
+          for f in dist/*.conda; do
+            python3 tools/fragment.py "$f" "${{ inputs.platform }}"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meta
+          git commit -m "Add fragments: torch ${{ inputs.version }} ${{ inputs.flavour }} py${{ inputs.python }} ${{ inputs.platform }}"
+          for i in 1 2 3; do
+            git push origin main && break
+            git pull --rebase origin main
+          done
+
+      - name: Trigger channel publish
+        # pushes made with GITHUB_TOKEN do not fire push-triggered workflows
+        run: gh workflow run publish-channel.yml --ref main
