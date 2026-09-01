@@ -15,8 +15,8 @@ from pathlib import Path
 
 RELEASES = "https://github.com/Comfy-Forge/conda-torch/releases/download"
 CHANNEL = "https://comfy-forge.github.io/conda-torch"
-# noarch must always exist or solvers error on the channel
-ALWAYS_SUBDIRS = {"noarch"}
+# every subdir a client might request must exist (404s abort some solvers)
+ALWAYS_SUBDIRS = {"noarch", "linux-64", "linux-aarch64", "win-64", "osx-arm64", "osx-64"}
 
 
 def main() -> None:
