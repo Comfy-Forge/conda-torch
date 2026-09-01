@@ -67,6 +67,13 @@ def main() -> None:
     entry.update({"sha256": sha256, "md5": md5, "size": size, "subdir": args.subdir})
 
     out = args.meta_dir / args.subdir / f"{args.conda_file.name}.json"
+    if out.exists():
+        have = json.loads(out.read_text()).get("sha256")
+        if have == sha256:
+            print(f"{out}: already present with same sha256 — no-op")
+            return
+        sys.exit(f"{out}: exists with DIFFERENT sha256 ({have} vs {sha256}); "
+                 "published artifacts are immutable — bump the build number instead")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(entry, indent=1, sort_keys=True) + "\n")
     print(out)

@@ -1,0 +1,54 @@
+name: mirror-cf
+
+on:
+  workflow_dispatch:
+    inputs:
+      subdir:
+        description: "Subdir (linux-64, win-64, linux-aarch64, noarch) — used with filenames"
+        required: false
+        type: string
+      filenames:
+        description: "Space-separated .conda filenames to mirror from conda-forge"
+        required: false
+        type: string
+      manifest:
+        description: "Path in this repo to a manifest file (lines: '<subdir> <filename>')"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror-cf
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mirror from conda-forge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIRROR_CACHE: ${{ runner.temp }}/mirror-cache
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.manifest }}" ]; then
+            python3 tools/mirror_cf.py --manifest "${{ inputs.manifest }}"
+          else
+            [ -n "${{ inputs.subdir }}" ] && [ -n "${{ inputs.filenames }}" ] || { echo "need subdir+filenames or manifest" >&2; exit 1; }
+            python3 tools/mirror_cf.py --subdir "${{ inputs.subdir }}" ${{ inputs.filenames }}
+          fi
+      - name: Commit fragments
+        run: |
+          set -euo pipefail
+          git config user.name "conda-torch-bot"
+          git config user.email "conda-torch-bot@users.noreply.github.com"
+          git add meta/
+          git diff --cached --quiet && { echo "nothing new"; exit 0; }
+          git commit -m "Mirror fragments from conda-forge"
+          for i in 1 2 3 4 5; do
+            git push && exit 0 || git pull --rebase
+          done
+          exit 1
