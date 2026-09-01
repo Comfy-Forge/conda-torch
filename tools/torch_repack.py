@@ -142,10 +142,17 @@ def log(msg: str) -> None:
 # wheel acquisition
 # --------------------------------------------------------------------------
 
+def fetch(url: str, timeout: int):
+    # download.pytorch.org 403s the default Python-urllib User-Agent
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "conda-torch/0.1 (+https://github.com/Comfy-Forge/conda-torch)"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 def wheel_url(version: str, flavour: str, py: str) -> str:
     cp = "cp" + py.replace(".", "")
     idx = f"https://download.pytorch.org/whl/{flavour}/torch/"
-    html = urllib.request.urlopen(idx, timeout=60).read().decode()
+    html = fetch(idx, 60).read().decode()
     pat = re.compile(r'href="([^"]*torch-%s%%2B%s-%s-%s-manylinux[^"]*x86_64\.whl)[#"]'
                      % (re.escape(version), flavour, cp, cp))
     m = pat.search(html)
@@ -160,7 +167,7 @@ def download(url: str, dest: Path) -> None:
         return
     log(f"downloading {url}")
     tmp = dest.with_suffix(".part")
-    with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
+    with fetch(url, 120) as r, open(tmp, "wb") as f:
         shutil.copyfileobj(r, f, 1 << 22)
     tmp.rename(dest)
     log(f"downloaded {dest.stat().st_size} bytes")
