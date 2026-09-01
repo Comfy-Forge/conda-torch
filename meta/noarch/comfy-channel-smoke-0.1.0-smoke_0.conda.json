@@ -1,0 +1,16 @@
+{
+ "arch": null,
+ "build": "smoke_0",
+ "build_number": 0,
+ "depends": [],
+ "license": "MIT",
+ "md5": "a7c4b054a5e7e26f9220ec069b729e07",
+ "name": "comfy-channel-smoke",
+ "noarch": "generic",
+ "platform": null,
+ "sha256": "34a5cbd4a24c057fd37880cb9ec599e1d9253618975637c2d537115dac2a72e6",
+ "size": 1048,
+ "subdir": "noarch",
+ "timestamp": 1788304392531,
+ "version": "0.1.0"
+}
