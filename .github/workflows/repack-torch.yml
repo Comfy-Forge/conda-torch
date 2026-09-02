@@ -70,8 +70,15 @@ jobs:
           for f in dist/*.conda; do
             b=$(basename "$f")
             if echo "$existing" | grep -qxF "$b"; then
-              echo "SKIP already-published $b (published artifacts are immutable)"
-              rm "$f"
+              if [ -f "meta/${{ inputs.platform }}/$b.json" ]; then
+                echo "SKIP already-published $b (published artifacts are immutable)"
+                rm "$f"
+              else
+                # a previous run uploaded the asset but died before committing
+                # its fragment: fragment the PUBLISHED bytes, not this rebuild
+                echo "asset $b exists but has no fragment; downloading published bytes"
+                gh release download "${{ inputs.platform }}" --pattern "$b" --output "$f" --clobber
+              fi
             else
               gh release upload "${{ inputs.platform }}" "$f"
             fi

@@ -12,6 +12,8 @@ Requires the `zstd` CLI (the .conda info tarball is zstd-compressed and
 python 3.12 has no stdlib zstd).
 """
 
+from __future__ import annotations  # runs under the target python; may be 3.8
+
 import argparse
 import hashlib
 import io
