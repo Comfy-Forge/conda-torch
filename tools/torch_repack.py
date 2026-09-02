@@ -75,7 +75,8 @@ TORCHRUN = """#!/bin/sh
 import sys
 from torch.distributed.run import main
 if __name__ == '__main__':
-    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    if sys.argv[0].endswith('.exe'):  # not str.removesuffix: py3.8 targets
+        sys.argv[0] = sys.argv[0][:-4]
     sys.exit(main())
 """.format(prefix=PLACEHOLDER)
 
@@ -97,13 +98,14 @@ WIN_MAIN = (
 PLATFORMS = {
     "linux-64": {
         "arch": "x86_64", "platform": "linux",
-        "wheel_re": r"manylinux[^\"]*x86_64\.whl",
+        # torch <= 2.5 published plain linux_x86_64 tags, not manylinux
+        "wheel_re": r"(?:manylinux[^\"]*|linux)_x86_64\.whl",
         "markers": {"platform_system": "Linux", "platform_machine": "x86_64",
                     "sys_platform": "linux", "os_name": "posix"},
     },
     "linux-aarch64": {
         "arch": "aarch64", "platform": "linux",
-        "wheel_re": r"manylinux[^\"]*aarch64\.whl",
+        "wheel_re": r"(?:manylinux[^\"]*|linux)_aarch64\.whl",
         "markers": {"platform_system": "Linux", "platform_machine": "aarch64",
                     "sys_platform": "linux", "os_name": "posix"},
     },
@@ -115,33 +117,11 @@ PLATFORMS = {
     },
 }
 
-# The python-independent heavyweights on linux-64 (zero Py* symbols,
-# verified): these move to $PREFIX/lib in libtorch. libtorch_python.so is
-# per-python and stays in the pytorch package (also at $PREFIX/lib,
-# conda-forge-style). On aarch64 the set is computed from the wheel
-# (extra members: libtorch_nvshmem.so and vendored NVPL/ACL libs).
-BIG_LIBS = [
-    "libtorch_cuda.so",
-    "libtorch_cpu.so",
-    "libtorch_cuda_linalg.so",
-    "libtorch.so",
-    "libc10.so",
-    "libc10_cuda.so",
-    "libshm.so",
-    "libcaffe2_nvrtc.so",
-    "libtorch_global_deps.so",
-]
-# linux-64: exactly the objects with a direct CUDA DT_NEEDED (patch set is
-# proven minimal; RPATH does not propagate between siblings).
-PATCH_LIBS = [
-    "libtorch_cpu.so",
-    "libtorch_cuda.so",
-    "libtorch_cuda_linalg.so",
-    "libc10_cuda.so",
-    "libtorch_global_deps.so",
-    "libcaffe2_nvrtc.so",
-    "libtorch_python.so",
-]
+# The big python-independent .so set (zero Py* symbols, verified) is
+# enumerated from the wheel at split time — torch >=2.9 grew
+# libtorch_nvshmem on x86, old versions ship fewer libs. libtorch_python
+# is per-python and stays in the pytorch package (at $PREFIX/lib,
+# conda-forge-style).
 # From site-packages/torch/lib, $PREFIX/lib is exactly four levels up.
 ADDED_RPATH = "$ORIGIN/../../../.."
 # aarch64 private dir for wheel-vendored libs whose top-level names would
@@ -184,6 +164,9 @@ PY_DEP_MAP = {
     "setuptools": "setuptools",
     "triton": "triton",
     "numpy": "numpy",
+    "importlib-metadata": "importlib-metadata",
+    "packaging": "packaging",
+    "cuda-bindings": "cuda-bindings",
 }
 
 # --- win-64 payload surgery ------------------------------------------------
@@ -326,8 +309,40 @@ def remote_metadata(version: str, flavour: str, py: str, subdir: str) -> str:
 # metadata translation
 # --------------------------------------------------------------------------
 
-def parse_requires(metadata_text: str, py: str, subdir: str) -> list[tuple[str, str]]:
-    """Marker-evaluated Requires-Dist for the target platform: [(name, spec)]."""
+class V:
+    """Marker/spec comparison value: numeric-dotted versions compare as
+    version tuples ('3.9' < '3.15'); everything else as plain strings.
+    PEP 508 says version-y markers compare as versions — a lexical '3.9' <
+    '3.15' would silently drop deps on old pythons."""
+
+    def __init__(self, s: str):
+        self.s = str(s)
+        self.t = None
+        if re.fullmatch(r"\d+(\.\d+)*", self.s):
+            self.t = tuple(int(x) for x in self.s.split("."))
+
+    def _k(self, other):
+        if self.t is not None and other.t is not None:
+            n = max(len(self.t), len(other.t))
+            pad = lambda t: t + (0,) * (n - len(t))
+            return pad(self.t), pad(other.t)
+        return self.s, other.s
+
+    def __eq__(self, o): a, b = self._k(o); return a == b
+    def __ne__(self, o): a, b = self._k(o); return a != b
+    def __lt__(self, o): a, b = self._k(o); return a < b
+    def __le__(self, o): a, b = self._k(o); return a <= b
+    def __gt__(self, o): a, b = self._k(o); return a > b
+    def __ge__(self, o): a, b = self._k(o); return a >= b
+    def __hash__(self): return hash(self.s)
+
+
+def parse_requires(metadata_text: str, py: str, subdir: str) -> list[tuple[str, list[str], str]]:
+    """Marker-evaluated Requires-Dist for the target platform.
+
+    Returns [(normalized_name, extras, spec)] — extras matter for torch
+    2.14+'s `cuda-toolkit[cublas,...]==13.2.1` dependency shape.
+    """
     env = dict(PLATFORMS[subdir]["markers"])
     env.update({
         "python_version": py,
@@ -348,24 +363,63 @@ def parse_requires(metadata_text: str, py: str, subdir: str) -> list[tuple[str, 
             continue
         if marker and not eval_marker(marker, env):
             continue
-        m = re.match(r"^([A-Za-z0-9._-]+)\s*(.*)$", req)
+        m = re.match(r"^([A-Za-z0-9._-]+)\s*(\[[^\]]*\])?\s*(.*)$", req)
         if not m:
             sys.exit(f"unparseable Requires-Dist: {line}")
         name = m.group(1).lower().replace("_", "-").replace(".", "-")
-        spec = m.group(2).strip().strip("()").strip()
-        out.append((name, spec))
+        extras = [e.strip() for e in m.group(2)[1:-1].split(",")] if m.group(2) else []
+        spec = m.group(3).strip().strip("()").strip()
+        out.append((name, extras, spec))
     return out
 
 
 def eval_marker(marker: str, env: dict[str, str]) -> bool:
-    """Tiny PEP 508 marker evaluator: ==, !=, >=, and/or/parens only."""
-    expr = marker
+    """Tiny PEP 508 marker evaluator: comparisons, and/or/parens only.
+    Values are wrapped in V() so python_version compares numerically
+    ('3.9' < '3.15' must be True — a lexical compare drops deps)."""
+    # wrap ALL string literals first (before any V( exists), then names
+    expr = marker.replace('"', "'")
+    expr = re.sub(r"'([^']*)'", r"V('\1')", expr)
     for k, v in env.items():
-        expr = re.sub(rf"\b{k}\b", repr(v), expr)
-    expr = re.sub(r'"([^"]*)"', r"'\1'", expr)
-    if re.search(r"[A-Za-z_]{2,}", re.sub(r"\b(and|or|not|in)\b", "", re.sub(r"'[^']*'", "", expr))):
+        expr = re.sub(rf"\b{k}\b", f"V({v!r})", expr)
+    leftover = re.sub(r"\bV\('[^']*'\)", "", expr)
+    if re.search(r"[A-Za-z_]{2,}", re.sub(r"\b(and|or|not|in)\b", "", leftover)):
         sys.exit(f"marker has unknown variables, refusing to guess: {marker}")
-    return bool(eval(expr, {"__builtins__": {}}))
+    return bool(eval(expr, {"__builtins__": {}, "V": V}))
+
+
+def pep_clauses(spec: str) -> list[tuple[str, str]]:
+    """'<13,>=12.6.85' -> [('<','13'), ('>=','12.6.85')]; '~=' expanded."""
+    clauses = []
+    for part in filter(None, (p.strip() for p in spec.split(","))):
+        m = re.match(r"^(~=|==|!=|<=|>=|<|>)\s*([0-9][0-9a-zA-Z.*+!-]*)$", part)
+        if not m:
+            sys.exit(f"unsupported version clause {part!r} in {spec!r}")
+        op, ver = m.group(1), m.group(2)
+        if op == "~=":
+            base = ver.split(".")
+            if len(base) < 2:
+                sys.exit(f"~= needs at least two components: {part}")
+            upper = ".".join(base[:-2] + [str(int(base[-2]) + 1)])
+            clauses += [(">=", ver), ("<", upper + ".0a0")]
+        else:
+            clauses.append((op, ver))
+    return clauses
+
+
+def conda_spec(spec: str) -> str:
+    """PEP 440 specifier -> conda version spec (same ops, ~= expanded)."""
+    if not spec:
+        return ""
+    return ",".join(op + ver for op, ver in pep_clauses(spec))
+
+
+def spec_floor(spec: str) -> str | None:
+    """The == or >= version in a specifier, if any."""
+    for op, ver in pep_clauses(spec):
+        if op in ("==", ">="):
+            return ver.rstrip(".*")
+    return None
 
 
 def nvidia_key(name: str) -> str | None:
@@ -373,20 +427,40 @@ def nvidia_key(name: str) -> str | None:
     return base if base in NVIDIA_MAP else None
 
 
-def translate_deps(requires: list[tuple[str, str]]) -> list[str]:
+# torch 2.14+ pins `cuda-toolkit[extras]==X.Y.Z` instead of individual
+# nvidia-* wheels. Each extra maps to the conda-forge component; versions
+# ride the flavour's cuda-version window (conda-forge CUDA libs constrain
+# their own cuda-version per release line).
+CUDA_TOOLKIT_EXTRAS = {
+    "cublas": "libcublas", "cudart": "cuda-cudart", "cufft": "libcufft",
+    "cufile": "libcufile", "cupti": "cuda-cupti", "curand": "libcurand",
+    "cusolver": "libcusolver", "cusparse": "libcusparse",
+    "nvjitlink": "libnvjitlink", "nvrtc": "cuda-nvrtc", "nvtx": "cuda-nvtx",
+}
+# python-level deps that live in the *pytorch* package but are CUDA-family
+# and routinely missing from conda-forge for a given line — candidates for
+# a PyPI side-repack when the translated range is unsatisfiable there.
+SIDE_REPACK_OK = {"triton": "triton", "cuda-bindings": "cuda-bindings"}
+
+
+def translate_deps(requires: list[tuple[str, list[str], str]]) -> list[str]:
     """PyPI requirement list -> conda depends for the *pytorch* package.
 
-    nvidia-*/CUDA deps are handled separately (they belong to libtorch).
+    nvidia-*/cuda-toolkit deps are handled separately (they belong to
+    libtorch).
     """
     deps = []
-    for name, spec in requires:
-        if nvidia_key(name):
+    for name, extras, spec in requires:
+        if nvidia_key(name) or name == "cuda-toolkit":
             continue  # carried by libtorch
+        if name in SIDE_REPACK_OK:
+            deps.append(f"{SIDE_REPACK_OK[name]} {conda_spec(spec)}".strip())
+            continue
         if name not in PY_DEP_MAP:
             sys.exit(f"unmapped PyPI dependency {name!r} ({spec!r}); add it to PY_DEP_MAP")
         conda = PY_DEP_MAP[name]
-        spec = spec.replace("~=", ">=")
-        if conda == "setuptools":
+        spec = conda_spec(spec)
+        if conda == "setuptools" and "<" not in spec:
             # runtime dep on 3.12+; new setuptools removed pkg_resources
             spec = (spec + "," if spec else "") + "<82"
         deps.append(f"{conda} {spec}".strip())
@@ -394,32 +468,45 @@ def translate_deps(requires: list[tuple[str, str]]) -> list[str]:
 
 
 def cuda_bound(name: str, spec: str) -> str:
-    m = re.match(r"^==\s*([0-9][0-9.]*)$", spec)
-    if not m:
-        sys.exit(f"expected an exact pin for {name}, got {spec!r}")
-    v = m.group(1)
-    return f">={v},<{int(v.split('.')[0]) + 1}.0a0"
+    """Exact pin -> lower bound + next-major cap (CUDA minor compat).
+    torch 2.14 moved some pins to ranges — translate those faithfully."""
+    clauses = pep_clauses(spec)
+    if len(clauses) == 1 and clauses[0][0] == "==":
+        v = clauses[0][1]
+        return f">={v},<{int(v.split('.')[0]) + 1}.0a0"
+    return ",".join(op + ver for op, ver in clauses)
 
 
-def cuda_deps(requires: list[tuple[str, str]], flavour: str) -> list[str]:
-    """nvidia-* wheel pins -> conda-forge CUDA deps for the *libtorch* package.
+def cuda_dep_map(requires: list[tuple[str, list[str], str]],
+                 flavour: str) -> dict[str, str]:
+    """All CUDA-side deps as {conda_name: conda_version_spec_or_''}."""
+    out: dict[str, str] = {}
+    for name, extras, spec in requires:
+        if name == "cuda-toolkit":
+            pin = spec_floor(spec)
+            want = f"{flavour[2:-1]}.{flavour[-1]}"
+            if pin and not pin.startswith(want):
+                sys.exit(f"cuda-toolkit pin {pin} does not match flavour {flavour}")
+            for extra in extras:
+                if extra not in CUDA_TOOLKIT_EXTRAS:
+                    sys.exit(f"unknown cuda-toolkit extra {extra!r}; extend the map")
+                out[CUDA_TOOLKIT_EXTRAS[extra]] = ""
+            continue
+        key = nvidia_key(name)
+        if key:
+            out[NVIDIA_MAP[key]] = cuda_bound(name, spec)
+    unmapped = {n for n, _, _ in requires if n.startswith("nvidia-") and not nvidia_key(n)}
+    if unmapped:
+        sys.exit(f"nvidia deps without a conda mapping: {unmapped}")
+    return out
 
-    Wheel pin becomes the lower bound; cap at the next major (CUDA minor
-    compatibility — an exact-minor cap is UNSAT because e.g. conda-forge
-    triton 3.4.0 only exists as a cuda129 build).
-    """
+
+def cuda_deps(requires: list[tuple[str, list[str], str]], flavour: str) -> list[str]:
+    """CUDA deps for the *libtorch* package, bounded by the flavour window."""
     cuda_minor = f"{flavour[2:-1]}.{flavour[-1]}"  # cu128 -> 12.8
     deps = ["__cuda", f"cuda-version >={cuda_minor},<{int(flavour[2:-1]) + 1}"]
-    seen = set()
-    for name, spec in requires:
-        key = nvidia_key(name)
-        if not key:
-            continue
-        deps.append(f"{NVIDIA_MAP[key]} {cuda_bound(name, spec)}")
-        seen.add(name)
-    missing = {n for n, _ in requires if n.startswith("nvidia-")} - seen
-    if missing:
-        sys.exit(f"nvidia deps without a conda mapping: {missing}")
+    for pkg, bound in cuda_dep_map(requires, flavour).items():
+        deps.append(f"{pkg} {bound}".strip())
     return deps
 
 
@@ -427,7 +514,7 @@ def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
     """win-64 libtorch CUDA deps.
 
     The Windows wheel declares ZERO nvidia requirements (everything is
-    vendored), so lower bounds are borrowed from the linux wheel of the
+    vendored), so the dep set is borrowed from the linux wheel of the
     same (version, flavour) — the same upstream build set — filtered to
     the packages that actually back a stripped DLL.
     """
@@ -436,16 +523,41 @@ def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
     log("range-reading linux METADATA for CUDA lower bounds...")
     linux_req = parse_requires(remote_metadata(version, flavour, py, "linux-64"),
                                py, "linux-64")
+    cmap = cuda_dep_map(linux_req, flavour)
     found = set()
-    for name, spec in linux_req:
-        key = nvidia_key(name)
-        if key and NVIDIA_MAP[key] in WIN_CUDA_PKGS:
-            deps.append(f"{NVIDIA_MAP[key]} {cuda_bound(name, spec)}")
-            found.add(NVIDIA_MAP[key])
+    for pkg, bound in cmap.items():
+        if pkg in WIN_CUDA_PKGS:
+            deps.append(f"{pkg} {bound}".strip())
+            found.add(pkg)
     missing = WIN_CUDA_PKGS - found
     if missing:
         sys.exit(f"linux METADATA gave no pins for {missing}; cannot bound win deps")
     return deps
+
+
+_CF_CACHE: dict[tuple[str, str], list[str]] = {}
+
+
+def cf_versions(pkg: str, subdir: str) -> list[str]:
+    """All conda-forge versions of pkg for subdir (anaconda.org API)."""
+    key = (pkg, subdir)
+    if key not in _CF_CACHE:
+        try:
+            files = json.load(fetch(f"https://api.anaconda.org/package/conda-forge/{pkg}/files", 60))
+        except Exception:
+            files = []
+        _CF_CACHE[key] = sorted({f["version"] for f in files
+                                 if f.get("attrs", {}).get("subdir") == subdir})
+    return _CF_CACHE[key]
+
+
+def cf_satisfiable(pkg: str, spec: str, subdir: str) -> bool:
+    versions = cf_versions(pkg, subdir)
+    ops = {"==": V.__eq__, "!=": V.__ne__, "<": V.__lt__, "<=": V.__le__,
+           ">": V.__gt__, ">=": V.__ge__}
+    clauses = pep_clauses(spec) if spec else []
+    return any(all(ops[op](V(v), V(ver.rstrip(".*"))) for op, ver in clauses)
+               for v in versions)
 
 
 # --------------------------------------------------------------------------
@@ -577,37 +689,14 @@ def win_launcher_exe() -> bytes:
 # per-platform splits: populate lt_stage/pt_stage from the extracted wheel
 # --------------------------------------------------------------------------
 
-def split_linux64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
-    tlib = sp / "torch" / "lib"
-    (lt_stage / "lib").mkdir(parents=True)
-    for so in BIG_LIBS:
-        shutil.move(tlib / so, lt_stage / "lib" / so)
-        make_symlink(tlib / so, f"../../../../{so}")
-    # vendored OpenMP out, conda-forge libgomp in (soname-identical, dedupes)
-    gomp = list(tlib.glob("libgomp*"))
-    if len(gomp) != 1:
-        sys.exit(f"expected one vendored libgomp, found {gomp}")
-    gomp[0].unlink()
-
-    # libtorch_python.so is per-python: real at $PREFIX/lib in *pytorch*
-    (pt_stage / "lib").mkdir(exist_ok=True)
-    shutil.move(tlib / "libtorch_python.so", pt_stage / "lib" / "libtorch_python.so")
-    make_symlink(tlib / "libtorch_python.so", "../../../../libtorch_python.so")
-
-    move_headers_cmake(sp, lt_stage, ups=5)
-
-    log("patching RPATHs (--force-rpath: RUNPATH would lose to LD_LIBRARY_PATH)...")
-    for so in PATCH_LIBS:
-        target = (pt_stage / "lib" / so) if so == "libtorch_python.so" else (lt_stage / "lib" / so)
-        patch_rpath(target, ADDED_RPATH)
-    return {}
-
-
-def split_aarch64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
+def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[str, str]:
+    """One split for both linux subdirs. The lib set is enumerated from the
+    wheel (torch >=2.9 grew libtorch_nvshmem on x86 too; old versions have
+    fewer libs), never from a static list."""
     if (sp / "torch.libs").exists():
         sys.exit("torch.libs/ present (auditwheel-mangled sonames): this is the "
                  "CPU-wheel layout, which this pipeline does not target. The CUDA "
-                 "aarch64 wheels vendor in torch/lib with stock sonames.")
+                 "wheels vendor in torch/lib with stock sonames.")
     tlib = sp / "torch" / "lib"
     (lt_stage / "lib" / VENDOR_DIR).mkdir(parents=True)
 
@@ -621,7 +710,7 @@ def split_aarch64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
         if so == "libtorch_python.so" or so.startswith("libgomp"):
             continue
         (vendored if VENDOR_PRIVATE.match(so) else big).append(so)
-    log(f"aarch64 split: {len(big)} big libs, {len(vendored)} vendored ({vendored})")
+    log(f"{subdir} split: {len(big)} big libs, {len(vendored)} vendored ({vendored})")
 
     for so in big:
         shutil.move(tlib / so, lt_stage / "lib" / so)
@@ -643,14 +732,15 @@ def split_aarch64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
     # Big libs may be opened directly ($ORIGIN = $PREFIX/lib) or through
     # the torch/lib symlink ($ORIGIN = torch/lib — glibc expands from the
     # opening path, not the realpath), so both spellings of both targets
-    # are needed. aarch64 wheels use bare RUNPATH=$ORIGIN, so every big
-    # lib gets patched (not just the CUDA-linked minimum).
+    # are needed. Every big lib gets patched with --force-rpath (a
+    # RUNPATH would lose to LD_LIBRARY_PATH); patching non-CUDA libs too
+    # is harmless and keeps the two linux subdirs identical.
     added = ":".join([
         ADDED_RPATH,
         f"$ORIGIN/{VENDOR_DIR}",
         f"$ORIGIN/../../../../{VENDOR_DIR}",
     ])
-    log("patching RPATHs (aarch64: all big libs + vendored set)...")
+    log("patching RPATHs (all big libs + vendored set, --force-rpath)...")
     for so in big:
         patch_rpath(lt_stage / "lib" / so, added)
     patch_rpath(pt_stage / "lib" / "libtorch_python.so", added)
@@ -745,7 +835,8 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------
-# nvshmem repack (aarch64 only; conda-forge has no nvshmem, verified 404)
+# nvshmem repack (linux; torch >= 2.9 needs it on x86 too, and conda-forge
+# has no nvshmem at all — verified 404)
 # --------------------------------------------------------------------------
 
 # sonames a repacked nvshmem lib may legitimately NEED without a mapping
@@ -754,20 +845,32 @@ NVSHMEM_OK_NEEDED = re.compile(
     r"|libcudart|libcuda|libnvidia-ml|libnvshmem)")
 
 
-def build_nvshmem(pin_version: str, subdir: str, py: str,
+def pypi_wheel_url(pypi_name: str, version: str, want: list[str]) -> str:
+    """URL of the first wheel for pypi_name==version matching all `want`
+    substrings (falling back to a py3-none-any wheel)."""
+    api = json.load(fetch(f"https://pypi.org/pypi/{pypi_name}/{version}/json", 60))
+    wheels = [f for f in api["urls"] if f["filename"].endswith(".whl")]
+    for f in wheels:
+        if all(w in f["filename"] for w in want):
+            return f["url"]
+    for f in wheels:
+        if "py3-none-any" in f["filename"]:
+            return f["url"]
+    sys.exit(f"no wheel for {pypi_name} {version} matching {want} on PyPI "
+             f"(have: {[f['filename'] for f in wheels]})")
+
+
+def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
                   outdir: Path, work: Path, build_number: int) -> tuple[str, Path | None]:
-    """Repack nvidia-nvshmem-cu12 from PyPI into $PREFIX/lib.
+    """Repack nvidia-nvshmem-cuNN from PyPI into $PREFIX/lib.
 
     Returns (conda dep string, built .conda path).
     """
-    api = json.load(fetch(f"https://pypi.org/pypi/nvidia-nvshmem-cu12/{pin_version}/json", 60))
+    fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))  # 12 or 13
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    urls = [f["url"] for f in api["urls"]
-            if f["filename"].endswith(".whl") and plat in f["filename"]]
-    if not urls:
-        sys.exit(f"no {plat} wheel for nvidia-nvshmem-cu12 {pin_version} on PyPI")
-    wheel = work / urls[0].rsplit("/", 1)[1]
-    download(urls[0], wheel)
+    url = pypi_wheel_url(pypi_name, pin_version, [plat])
+    wheel = work / url.rsplit("/", 1)[1]
+    download(url, wheel)
 
     stage = work / "nvshmem_stage"
     if stage.exists():
@@ -812,13 +915,13 @@ def build_nvshmem(pin_version: str, subdir: str, py: str,
                 sys.exit(f"nvshmem CORE lib {so.name} NEEDs unexpected {outside}; "
                          "add a conda mapping before shipping")
 
-    hsh = hashlib.sha256(f"nvidia-nvshmem|{pin_version}|cuda12".encode()).hexdigest()[:8]
+    hsh = hashlib.sha256(f"nvidia-nvshmem|{pin_version}|cuda{fam}".encode()).hexdigest()[:8]
     index = {
         "arch": PLATFORMS[subdir]["arch"], "platform": "linux", "subdir": subdir,
         "name": "nvidia-nvshmem", "version": pin_version,
-        "build": f"cuda12_repack_h{hsh}_{build_number}", "build_number": build_number,
-        "depends": ["__glibc >=2.28", "cuda-version >=12,<13", "cuda-cudart >=12,<13",
-                    "libgcc", "libstdcxx"],
+        "build": f"cuda{fam}_repack_h{hsh}_{build_number}", "build_number": build_number,
+        "depends": ["__glibc >=2.28", f"cuda-version >={fam},<{fam + 1}",
+                    f"cuda-cudart >={fam},<{fam + 1}", "libgcc", "libstdcxx"],
         "license": "LicenseRef-NVIDIA-SLA", "timestamp": int(time.time() * 1000),
     }
     about = {"home": "https://developer.nvidia.com/nvshmem",
@@ -829,6 +932,77 @@ def build_nvshmem(pin_version: str, subdir: str, py: str,
     out = emit_conda(stage, outdir, index, about, {})
     dep = f"nvidia-nvshmem >={pin_version},<{int(pin_version.split('.')[0]) + 1}"
     return dep, out
+
+
+def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
+                        outdir: Path, work: Path, build_number: int) -> None:
+    """Repack a python-wheel dep (triton, cuda-bindings) whose translated
+    range conda-forge cannot satisfy for this torch line — e.g. triton
+    3.0.0 and 3.8.x have no conda-forge build at all. Same dist-info
+    contract as pytorch. Console scripts are NOT generated (recorded in
+    about.json; torch never shells out to them)."""
+    cp = "cp" + py.replace(".", "")
+    plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
+    url = pypi_wheel_url(pypi_name, version, [f"-{cp}-", plat])
+    wheel = work / url.rsplit("/", 1)[1]
+    download(url, wheel)
+
+    stage = work / f"side_{pypi_name}"
+    if stage.exists():
+        shutil.rmtree(stage)
+    sp = stage / f"lib/python{py}/site-packages"
+    sp.mkdir(parents=True)
+    extract_wheel(wheel, sp)
+
+    di = next(sp.glob("*.dist-info"))
+    (di / "RECORD").unlink(missing_ok=True)
+    (di / "INSTALLER").write_bytes(b"conda")
+    for junk in ("direct_url.json", "RECORD.jws", "REQUESTED"):
+        (di / junk).unlink(missing_ok=True)
+    entry_points = (di / "entry_points.txt").read_text() if (di / "entry_points.txt").exists() else ""
+    if entry_points:
+        log(f"{pypi_name}: console scripts NOT generated ({len(entry_points)} bytes of entry_points.txt)")
+
+    requires = parse_requires((di / "METADATA").read_text(errors="replace"), py, subdir)
+    for top in sorted(p for p in sp.iterdir() if p.is_dir() and not p.name.endswith(".dist-info")):
+        compileall.compile_dir(top, quiet=2, workers=0,
+                               invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+
+    has_elf = False
+    for so in sorted(sp.rglob("*.so*")):
+        if not so.is_file():
+            continue
+        with open(so, "rb") as fh:
+            if fh.read(4) != b"\x7fELF":
+                continue
+        has_elf = True
+        rel = os.path.relpath(stage / "lib", so.parent)
+        run("patchelf", "--force-rpath", "--add-rpath", f"$ORIGIN:$ORIGIN/{rel}", str(so))
+
+    deps = []
+    for name, _, spec in requires:
+        if name not in PY_DEP_MAP:
+            sys.exit(f"{pypi_name} dependency {name!r} ({spec!r}) unmapped; add to PY_DEP_MAP")
+        deps.append(f"{PY_DEP_MAP[name]} {conda_spec(spec)}".strip())
+    nxt = f"{py.split('.')[0]}.{int(py.split('.')[1]) + 1}"
+    deps += [f"python >={py},<{nxt}.0a0", f"python_abi {py}.* *_cp{py.replace('.', '')}"]
+    if has_elf:
+        deps += ["libgcc", "libstdcxx", "__glibc >=2.28", "libzlib"]
+
+    pytag = "py" + py.replace(".", "")
+    hsh = hashlib.sha256(f"{pypi_name}|{version}|{py}".encode()).hexdigest()[:8]
+    index = {
+        "arch": PLATFORMS[subdir]["arch"], "platform": PLATFORMS[subdir]["platform"],
+        "subdir": subdir, "name": pypi_name, "version": version,
+        "build": f"repack_{pytag}_h{hsh}_{build_number}", "build_number": build_number,
+        "depends": sorted(set(deps)),
+        "license": "see-upstream", "timestamp": int(time.time() * 1000),
+    }
+    about = {"summary": f"{pypi_name}, repacked from the official PyPI wheel "
+                        "(conda-forge has no build satisfying torch's pin)",
+             "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
+                       "skipped_entry_points": entry_points}}
+    emit_conda(stage, outdir, index, about, {})
 
 
 # --------------------------------------------------------------------------
@@ -995,19 +1169,28 @@ def main() -> None:
 
     # ---- platform split ----------------------------------------------------
     extra_lt_deps: list[str] = []
-    nvshmem_pin = next((re.match(r"^==\s*([0-9][0-9.]*)$", spec).group(1)
-                        for name, spec in requires
-                        if nvidia_key(name) == "nvidia-nvshmem" and spec.startswith("==")), None)
-    if args.subdir == "linux-64":
-        prefix_files = split_linux64(sp, pt_stage, lt_stage)
-        if nvshmem_pin:
-            sys.exit("linux-64 wheel unexpectedly requires nvshmem; extend the split first")
-    elif args.subdir == "linux-aarch64":
-        prefix_files = split_aarch64(sp, pt_stage, lt_stage)
-        if nvshmem_pin:
-            log(f"repacking nvidia-nvshmem {nvshmem_pin} (hard DT_NEEDED, no conda-forge pkg)...")
-            build_nvshmem(nvshmem_pin, args.subdir, args.py,
+    if is_linux:
+        prefix_files = split_linux(sp, pt_stage, lt_stage, args.subdir)
+        nvshmem_req = next(((name, spec) for name, _, spec in requires
+                            if nvidia_key(name) == "nvidia-nvshmem"), None)
+        if nvshmem_req:
+            pin = spec_floor(nvshmem_req[1])
+            if not pin:
+                sys.exit(f"cannot derive nvshmem version from {nvshmem_req[1]!r}")
+            log(f"repacking {nvshmem_req[0]} {pin} (hard DT_NEEDED, no conda-forge pkg)...")
+            build_nvshmem(nvshmem_req[0], pin, args.subdir, args.py,
                           args.outdir, args.work, args.build_number)
+        # side-repack python-wheel deps conda-forge cannot satisfy (e.g.
+        # triton 3.0.0 / 3.8.x never got a conda-forge build)
+        for name, _, spec in requires:
+            if name in SIDE_REPACK_OK and not cf_satisfiable(SIDE_REPACK_OK[name], spec, args.subdir):
+                floor = spec_floor(spec)
+                if not floor:
+                    sys.exit(f"cannot derive {name} version from {spec!r}")
+                log(f"side-repacking {name} {floor}: conda-forge cannot satisfy "
+                    f"{spec!r} on {args.subdir}")
+                side_repack_pywheel(name, floor, args.py, args.subdir,
+                                    args.outdir, args.work, args.build_number)
     else:
         prefix_files = split_win64(sp, pt_stage, lt_stage)
 

@@ -25,7 +25,8 @@ concurrency:
 
 jobs:
   repack:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 images dropped python <= 3.9; 22.04 still carries them
+    runs-on: ${{ contains(fromJSON('["3.8", "3.9"]'), inputs.python) && 'ubuntu-22.04' || 'ubuntu-latest' }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -39,6 +40,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python }}
+          # 3.15 is RC-only until October: .pyc magic is already frozen at RC
+          allow-prereleases: true
 
       - name: Install build tools
         run: |
