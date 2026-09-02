@@ -1,0 +1,21 @@
+{
+ "arch": "x86_64",
+ "build": "cuda13_repack_he9b6f4b5_0",
+ "build_number": 0,
+ "depends": [
+  "__glibc >=2.28",
+  "cuda-version >=13,<14",
+  "cuda-cudart >=13,<14",
+  "libgcc",
+  "libstdcxx"
+ ],
+ "license": "LicenseRef-NVIDIA-SLA",
+ "md5": "a269d391e6e066d5e6584049cd408b4c",
+ "name": "nvidia-nvshmem",
+ "platform": "linux",
+ "sha256": "14a6b91fc344a9ff2fa3805a8a7765f20bd6d3ea65346ffc32ae8eaa8003fed9",
+ "size": 38301981,
+ "subdir": "linux-64",
+ "timestamp": 1788319251152,
+ "version": "3.4.5"
+}
