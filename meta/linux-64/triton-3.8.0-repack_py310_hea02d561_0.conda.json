@@ -1,0 +1,22 @@
+{
+ "arch": "x86_64",
+ "build": "repack_py310_hea02d561_0",
+ "build_number": 0,
+ "depends": [
+  "__glibc >=2.28",
+  "libgcc",
+  "libstdcxx",
+  "libzlib",
+  "python >=3.10,<3.11.0a0",
+  "python_abi 3.10.* *_cp310"
+ ],
+ "license": "see-upstream",
+ "md5": "79a1f41581a1c0474ec0088665c07e2a",
+ "name": "triton",
+ "platform": "linux",
+ "sha256": "bece4a4483a266b42d745881dc74c3b3066500504927a38af506410b1f070690",
+ "size": 158619936,
+ "subdir": "linux-64",
+ "timestamp": 1788320261129,
+ "version": "3.8.0"
+}
