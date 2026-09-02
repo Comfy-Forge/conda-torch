@@ -1,0 +1,23 @@
+{
+ "arch": "x86_64",
+ "build": "repack_py311_hef5f81cd_0",
+ "build_number": 0,
+ "depends": [
+  "__glibc >=2.28",
+  "filelock",
+  "libgcc",
+  "libstdcxx",
+  "libzlib",
+  "python >=3.11,<3.12.0a0",
+  "python_abi 3.11.* *_cp311"
+ ],
+ "license": "see-upstream",
+ "md5": "687e504194015ce44648fbcf43bd3f00",
+ "name": "triton",
+ "platform": "linux",
+ "sha256": "5d718683f53e554cf04995275c2f78189fbc893f85ce5d85663645e5b413d8cf",
+ "size": 164556017,
+ "subdir": "linux-64",
+ "timestamp": 1788334948265,
+ "version": "3.0.0"
+}
