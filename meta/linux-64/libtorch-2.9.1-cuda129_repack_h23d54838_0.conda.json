@@ -1,0 +1,41 @@
+{
+ "arch": "x86_64",
+ "build": "cuda129_repack_h23d54838_0",
+ "build_number": 0,
+ "constrains": [
+  "pytorch 2.9.1 cuda129_repack_*"
+ ],
+ "depends": [
+  "__cuda",
+  "__glibc >=2.28",
+  "cuda-cudart >=12.9.79,<13.0a0",
+  "cuda-cupti >=12.9.79,<13.0a0",
+  "cuda-nvrtc >=12.9.86,<13.0a0",
+  "cuda-nvtx >=12.9.79,<13.0a0",
+  "cuda-version >=12.9,<13",
+  "cusparselt >=0.7.1,<1.0a0",
+  "libcublas >=12.9.1.4,<13.0a0",
+  "libcudnn >=9.10.2.21,<10.0a0",
+  "libcufft >=11.4.1.4,<12.0a0",
+  "libcufile >=1.14.1.1,<2.0a0",
+  "libcurand >=10.3.10.19,<11.0a0",
+  "libcusolver >=11.7.5.82,<12.0a0",
+  "libcusparse >=12.5.10.65,<13.0a0",
+  "libgcc >=12",
+  "libgomp",
+  "libnvjitlink >=12.9.86,<13.0a0",
+  "libstdcxx >=12",
+  "nccl >=2.27.5,<3.0a0",
+  "nvidia-nvshmem >=3.3.20,<4.0a0"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "4a2a10ed1deb87185420e9df81de58ad",
+ "name": "libtorch",
+ "platform": "linux",
+ "sha256": "98078cfc593877b91d410a125353b338299c846e202a1f5bd0e5a9298c10fbd8",
+ "size": 826837436,
+ "subdir": "linux-64",
+ "timestamp": 1788320547658,
+ "version": "2.9.1"
+}
