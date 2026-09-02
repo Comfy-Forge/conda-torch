@@ -15,6 +15,9 @@ on:
       platform:
         description: "conda subdir"
         default: "linux-64"
+      build_number:
+        description: "build number (bump to republish an entry with fixed metadata)"
+        default: "0"
 
 permissions:
   contents: write
@@ -56,6 +59,7 @@ jobs:
             --flavour "${{ inputs.flavour }}" \
             --python "${{ inputs.python }}" \
             --subdir "${{ inputs.platform }}" \
+            --build-number "${{ inputs.build_number }}" \
             -o dist --work work --delete-wheel --skip-published
           rm -rf work
           ls -la dist/

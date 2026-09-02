@@ -559,20 +559,34 @@ def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
     return deps
 
 
-_CF_CACHE: dict[tuple[str, str], list[str]] = {}
+_CF_FILES: dict[str, list] = {}
+
+
+def cf_files(pkg: str) -> list:
+    if pkg not in _CF_FILES:
+        for attempt in range(5):
+            try:
+                _CF_FILES[pkg] = json.load(fetch(
+                    f"https://api.anaconda.org/package/conda-forge/{pkg}/files", 60))
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 404:  # package genuinely absent from conda-forge
+                    _CF_FILES[pkg] = []
+                    break
+                if attempt == 4:
+                    raise  # a transient error must NOT read as "unsatisfiable"
+                time.sleep(10 * (attempt + 1))
+            except Exception:
+                if attempt == 4:
+                    raise
+                time.sleep(10 * (attempt + 1))
+    return _CF_FILES[pkg]
 
 
 def cf_versions(pkg: str, subdir: str) -> list[str]:
     """All conda-forge versions of pkg for subdir (anaconda.org API)."""
-    key = (pkg, subdir)
-    if key not in _CF_CACHE:
-        try:
-            files = json.load(fetch(f"https://api.anaconda.org/package/conda-forge/{pkg}/files", 60))
-        except Exception:
-            files = []
-        _CF_CACHE[key] = sorted({f["version"] for f in files
-                                 if f.get("attrs", {}).get("subdir") == subdir})
-    return _CF_CACHE[key]
+    return sorted({f["version"] for f in cf_files(pkg)
+                   if f.get("attrs", {}).get("subdir") == subdir})
 
 
 def cf_satisfiable(pkg: str, spec: str, subdir: str) -> bool:
@@ -584,6 +598,89 @@ def cf_satisfiable(pkg: str, spec: str, subdir: str) -> bool:
     clean = lambda ver: re.match(r"[0-9.]*", ver).group(0).rstrip(".")
     return any(all(ops[op](V(v), V(clean(ver))) for op, ver in clauses)
                for v in versions)
+
+
+_SPEC_OPS = {"==": V.__eq__, "!=": V.__ne__, "<": V.__lt__, "<=": V.__le__,
+             ">": V.__gt__, ">=": V.__ge__}
+_clean_ver = lambda ver: re.match(r"[0-9.]*", ver).group(0).rstrip(".")
+
+
+def _spec_admits(version: str, spec: str) -> bool:
+    if not spec:
+        return True
+    return all(_SPEC_OPS[op](V(version), V(_clean_ver(v))) for op, v in pep_clauses(spec))
+
+
+def _windows_overlap(a: str, b: str) -> bool:
+    """Both are conda specs like '>=12.8,<13'."""
+    def bounds(s):
+        lo, hi = None, None
+        for op, v in pep_clauses(s):
+            if op == ">=":
+                lo = _clean_ver(v)
+            elif op == "<":
+                hi = _clean_ver(v)
+        return lo, hi
+    alo, ahi = bounds(a)
+    blo, bhi = bounds(b)
+    lo = max(V(alo or "0"), V(blo or "0"))
+    his = [V(x) for x in (ahi, bhi) if x]
+    return not his or lo < min(his)
+
+
+def cf_satisfiable_in_window(pkg: str, spec: str, subdir: str, window: str) -> bool:
+    """A version satisfying spec is not enough: the BUILD's own
+    cuda-version constraint must intersect the entry's window (conda-forge
+    ships e.g. libcudnn 9.19+ only as cuda13 builds — UNSAT inside a
+    '>=12.8,<13' window even though the version exists)."""
+    for f in cf_files(pkg):
+        a = f.get("attrs", {})
+        if a.get("subdir") != subdir or not _spec_admits(f["version"], spec):
+            continue
+        cv = next((d.split(None, 1)[1] for d in a.get("depends", [])
+                   if d.startswith("cuda-version ")), None)
+        if cv is None or _windows_overlap(cv, window):
+            return True
+    return False
+
+
+# conda-forge CUDA lib names that have a PyPI-wheel fallback when no
+# conda-forge build fits the entry's cuda-version window. The fallback
+# name is deliberately ABSENT from conda-forge, so strict channel
+# priority can never shadow their line (the triton lesson: a name
+# carried at all must be carried completely).
+NVIDIA_FALLBACK = {"libcudnn": "nvidia-cudnn"}
+_CF_CUDA_PKGS = set(NVIDIA_MAP.values()) | set(CUDA_TOOLKIT_EXTRAS.values())
+
+
+def fix_window_unsat(deps: list[str], requires, flavour: str, subdir: str,
+                     outdir: Path, work: Path) -> list[str]:
+    """Replace conda-forge CUDA deps that no build can satisfy inside the
+    flavour window with a side-repacked nvidia-* package."""
+    window = f">={flavour[2:-1]}.{flavour[-1]},<{int(flavour[2:-1]) + 1}"
+    out = []
+    for d in deps:
+        pkg, _, spec = d.partition(" ")
+        if pkg not in _CF_CUDA_PKGS or pkg == "nvidia-nvshmem" \
+                or cf_satisfiable_in_window(pkg, spec, subdir, window):
+            out.append(d)
+            continue
+        if pkg not in NVIDIA_FALLBACK:
+            sys.exit(f"{pkg} {spec!r} has no conda-forge build inside cuda-version "
+                     f"{window} on {subdir} and no PyPI fallback is defined: grid hole")
+        if subdir == "win-64":
+            sys.exit(f"{pkg} {spec!r} window-UNSAT on win-64: extend the fallback "
+                     "for Windows (Library/bin DLL placement) before publishing")
+        req = next(((n, s) for n, _, s in requires
+                    if nvidia_key(n) and NVIDIA_MAP[nvidia_key(n)] == pkg), None)
+        if not req:
+            sys.exit(f"cannot find the wheel pin behind {pkg} to side-repack")
+        pin = spec_floor(req[1])
+        log(f"{pkg} {spec!r} UNSAT inside cuda-version {window} on {subdir}: "
+            f"side-repacking {req[0]} {pin} as {NVIDIA_FALLBACK[pkg]}")
+        build_nvidia_lib(req[0], pin, subdir, outdir, work)
+        out.append(f"{NVIDIA_FALLBACK[pkg]} >={pin},<{int(pin.split('.')[0]) + 1}.0a0")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -996,6 +1093,73 @@ def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
     return dep, out
 
 
+# sonames a repacked cudnn lib may legitimately NEED
+CUDNN_OK_NEEDED = re.compile(
+    r"^(libc[.\d]|libm[.\d]|libdl|librt|libpthread|ld-linux|libgcc_s"
+    r"|libstdc\+\+|libz\.so|libcudart|libcublas|libnvrtc|libcudnn)")
+
+
+def build_nvidia_lib(pypi_name: str, pin: str, subdir: str,
+                     outdir: Path, work: Path) -> None:
+    """Repack an nvidia-* payload wheel (cudnn today) into $PREFIX/lib as
+    nvidia-<component>. Always build_number 0: the artifact is shared
+    across entries and immutable once published (emit_conda's
+    skip-published check reuses it)."""
+    comp = re.sub(r"-cu\d+$", "", pypi_name)[len("nvidia-"):]
+    fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))
+    plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
+    url = pypi_wheel_url(pypi_name, pin, [plat])
+    wheel = work / url.rsplit("/", 1)[1]
+    download(url, wheel)
+
+    stage = work / f"nvlib_{comp}"
+    if stage.exists():
+        shutil.rmtree(stage)
+    (stage / "lib").mkdir(parents=True)
+    zf = zipfile.ZipFile(wheel)
+    n_libs = 0
+    for zi in zf.infolist():
+        parts = PurePosixPath(zi.filename).parts
+        if len(parts) >= 4 and parts[:3] == ("nvidia", comp, "lib"):
+            dest = stage / "lib" / Path(*parts[3:])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(zi) as src, open(dest, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            n_libs += 1
+    zf.close()
+    if n_libs == 0:
+        sys.exit(f"{pypi_name} wheel had no nvidia/{comp}/lib payload")
+
+    for so in sorted((stage / "lib").rglob("*.so*")):
+        with open(so, "rb") as fh:
+            magic = fh.read(4)
+        if not (so.is_file() and magic == b"\x7fELF"):
+            continue
+        run("patchelf", "--force-rpath", "--set-rpath", "$ORIGIN", str(so))
+        needed = subprocess.run(["patchelf", "--print-needed", str(so)],
+                                capture_output=True, text=True, check=True).stdout.split()
+        outside = [d for d in needed if not CUDNN_OK_NEEDED.match(d)]
+        if outside:
+            sys.exit(f"{comp} lib {so.name} NEEDs unexpected {outside}; "
+                     "extend the whitelist and dependency set before shipping")
+
+    hsh = hashlib.sha256(f"nvidia-{comp}|{pin}|cuda{fam}".encode()).hexdigest()[:8]
+    index = {
+        "arch": PLATFORMS[subdir]["arch"], "platform": "linux", "subdir": subdir,
+        "name": f"nvidia-{comp}", "version": pin,
+        "build": f"cuda{fam}_repack_h{hsh}_0", "build_number": 0,
+        "depends": ["__glibc >=2.28", f"cuda-version >={fam},<{fam + 1}",
+                    f"cuda-cudart >={fam},<{fam + 1}", "libcublas", "cuda-nvrtc",
+                    "libzlib", "libgcc", "libstdcxx"],
+        "license": "LicenseRef-NVIDIA-SLA", "timestamp": int(time.time() * 1000),
+    }
+    about = {"home": "https://developer.nvidia.com",
+             "summary": f"{comp}, repacked from the official PyPI wheel "
+                        "(no conda-forge build fits the entry's cuda-version window)",
+             "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel)}}
+    emit_conda(stage, outdir, index, about, {})
+
+
 def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
                         outdir: Path, work: Path, build_number: int) -> None:
     """Repack a python-wheel dep (triton, cuda-bindings) whose translated
@@ -1299,8 +1463,10 @@ def main() -> None:
             if not pin:
                 sys.exit(f"cannot derive nvshmem version from {nvshmem_req[1]!r}")
             log(f"repacking {nvshmem_req[0]} {pin} (hard DT_NEEDED, no conda-forge pkg)...")
+            # shared side artifact: always build_number 0 (immutable, reused
+            # across entries; entry-level bumps must not fork new copies)
             build_nvshmem(nvshmem_req[0], pin, args.subdir, args.py,
-                          args.outdir, args.work, args.build_number)
+                          args.outdir, args.work, 0)
         # side-repack python-wheel deps conda-forge cannot satisfy (e.g.
         # triton 3.0.0 / 3.8.x never got a conda-forge build)
         for name, _, spec in requires:
@@ -1311,7 +1477,7 @@ def main() -> None:
                 log(f"side-repacking {name} {floor}: conda-forge cannot satisfy "
                     f"{spec!r} on {args.subdir}")
                 side_repack_pywheel(name, floor, args.py, args.subdir,
-                                    args.outdir, args.work, args.build_number)
+                                    args.outdir, args.work, 0)
     else:
         prefix_files = split_win64(sp, pt_stage, lt_stage)
 
@@ -1342,6 +1508,11 @@ def main() -> None:
         ]
         if args.subdir == "linux-aarch64":
             lt_deps.append("libzlib")  # vendored gfortran/cudnn_graph NEED libz.so.1
+    # a version satisfying the bound is not enough — a conda-forge BUILD
+    # must exist inside the flavour's cuda-version window (libcudnn 9.19+
+    # is cuda13-only there); otherwise substitute a PyPI side-repack
+    lt_deps = fix_window_unsat(lt_deps, requires, flavour, args.subdir,
+                               args.outdir, args.work)
     hsh = lambda s: hashlib.sha256(s.encode()).hexdigest()[:8]
     lt_build = f"cuda{flavour[2:]}_repack_h{hsh('libtorch|' + args.version + '|' + flavour)}_{args.build_number}"
     pt_build = f"cuda{flavour[2:]}_repack_{pytag}_h{hsh('pytorch|' + args.version + '|' + flavour + '|' + py)}_{args.build_number}"
