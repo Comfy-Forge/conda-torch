@@ -129,7 +129,26 @@ ADDED_RPATH = "$ORIGIN/../../../.."
 # libgfortran5, NVPL/ACL names could belong to future feedstocks). ABI
 # fidelity matters more than dedup here: torch pins an exact ACL build.
 VENDOR_DIR = "libtorch-vendored"
-VENDOR_PRIVATE = re.compile(r"^lib(arm_compute|nvpl_|gfortran)")
+VENDOR_PRIVATE = re.compile(r"^lib(arm_compute|nvpl_|gfortran|openblas)")
+
+# The vendored-CUDA era (old aarch64 wheels, e.g. 2.4.1/2.5.1 cu124):
+# torch/lib carries the whole CUDA stack with stock sonames. Those are
+# STRIPPED and replaced by conda-forge deps — moving them to $PREFIX/lib
+# would clobber conda-forge's own files, keeping them would double-load
+# against any other CUDA-using conda package, and the package would blow
+# the 2 GiB asset cap (~2.3 GB compressed vendored).
+CUDA_VENDORED = re.compile(
+    r"^lib(cudart|cublasLt|cublas|cudnn(?:_\w+)?|cufftw|cufft|cupti|curand"
+    r"|cusolver(?:Mg)?|cusparseLt|cusparse|nccl|nvJitLink|nvToolsExt"
+    r"|nvrtc(?:-builtins)?|cufile|nvperf\w*)\.so")
+CUDA_SONAME_PKG = {
+    "cudart": "cuda-cudart", "cublas": "libcublas", "cublasLt": "libcublas",
+    "cufft": "libcufft", "cufftw": "libcufft", "cupti": "cuda-cupti",
+    "curand": "libcurand", "cusolver": "libcusolver", "cusolverMg": "libcusolver",
+    "cusparse": "libcusparse", "cusparseLt": "cusparselt", "nccl": "nccl",
+    "nvJitLink": "libnvjitlink", "nvToolsExt": "cuda-nvtx", "nvrtc": "cuda-nvrtc",
+    "nvrtc-builtins": "cuda-nvrtc", "cufile": "libcufile",
+}
 
 # nvidia-* wheel pin -> conda-forge package (verified to exist with
 # matching versions; -cuNN suffix stripped before lookup). 'cudnn' on
@@ -243,12 +262,17 @@ def wheel_url(version: str, flavour: str, py: str, subdir: str) -> str:
     cp = "cp" + py.replace(".", "")
     idx = f"https://download.pytorch.org/whl/{flavour}/torch/"
     html = fetch(idx, 60).read().decode()
-    pat = re.compile(r'href="([^"]*torch-%s%%2B%s-%s-%s-%s)[#"]'
-                     % (re.escape(version), flavour, cp, cp, PLATFORMS[subdir]["wheel_re"]))
-    m = pat.search(html)
-    if not m:
-        sys.exit(f"no {subdir} wheel for torch {version}+{flavour} {cp} on {idx}")
-    return full_url(m.group(1))
+    # some flavour-dir wheels carry no +cuNN local tag (old aarch64 CUDA
+    # builds): the flavour is encoded only by the directory. Prefer the
+    # tagged name; fall back to tag-less. version.py is verified against
+    # the flavour after extraction either way.
+    for ver_pat in (re.escape(version) + "%2B" + flavour, re.escape(version)):
+        pat = re.compile(r'href="([^"]*torch-%s-%s-%s-%s)[#"]'
+                         % (ver_pat, cp, cp, PLATFORMS[subdir]["wheel_re"]))
+        m = pat.search(html)
+        if m:
+            return full_url(m.group(1))
+    sys.exit(f"no {subdir} wheel for torch {version}+{flavour} {cp} on {idx}")
 
 
 def download(url: str, dest: Path) -> None:
@@ -556,7 +580,9 @@ def cf_satisfiable(pkg: str, spec: str, subdir: str) -> bool:
     ops = {"==": V.__eq__, "!=": V.__ne__, "<": V.__lt__, "<=": V.__le__,
            ">": V.__gt__, ">=": V.__ge__}
     clauses = pep_clauses(spec) if spec else []
-    return any(all(ops[op](V(v), V(ver.rstrip(".*"))) for op, ver in clauses)
+    # strip .* and alpha caps (<10.0a0) so bounds compare numerically
+    clean = lambda ver: re.match(r"[0-9.]*", ver).group(0).rstrip(".")
+    return any(all(ops[op](V(v), V(clean(ver))) for op, ver in clauses)
                for v in versions)
 
 
@@ -700,7 +726,7 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[s
     tlib = sp / "torch" / "lib"
     (lt_stage / "lib" / VENDOR_DIR).mkdir(parents=True)
 
-    big, vendored = [], []
+    big, vendored, stripped_cuda = [], [], []
     # regular .so files only: 2.9.0 aarch64 ships stray DIRECTORIES
     # (libshm/, libshm_windows/) inside torch/lib — those stay put
     for p in sorted(tlib.iterdir()):
@@ -709,8 +735,13 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[s
             continue
         if so == "libtorch_python.so" or so.startswith("libgomp"):
             continue
+        if CUDA_VENDORED.match(so):
+            stripped_cuda.append(so)
+            p.unlink()
+            continue
         (vendored if VENDOR_PRIVATE.match(so) else big).append(so)
-    log(f"{subdir} split: {len(big)} big libs, {len(vendored)} vendored ({vendored})")
+    log(f"{subdir} split: {len(big)} big libs, {len(vendored)} vendored ({vendored}), "
+        f"{len(stripped_cuda)} vendored-CUDA stripped ({stripped_cuda})")
 
     for so in big:
         shutil.move(tlib / so, lt_stage / "lib" / so)
@@ -747,7 +778,38 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[s
     for so in vendored:
         target = lt_stage / "lib" / VENDOR_DIR / so
         run("patchelf", "--force-rpath", "--set-rpath", "$ORIGIN:$ORIGIN/..", str(target))
-    return {}
+    return {}, stripped_cuda
+
+
+def vendored_cuda_dep_list(stripped: list[str], version: str, flavour: str,
+                           py: str, subdir: str) -> list[str]:
+    """conda deps replacing stripped vendored-CUDA libs (old aarch64 wheels).
+
+    Bounds are borrowed from the x86 wheel of the same (version, flavour)
+    where it declares pins; components without a borrowed pin ride the
+    flavour's cuda-version window unversioned. Every mapped package is
+    checked to exist on conda-forge for this subdir — a missing one means
+    the cell must be reported as a hole, not published broken."""
+    pkgs = set()
+    for so in stripped:
+        base = CUDA_VENDORED.match(so).group(1)
+        if base.startswith("cudnn"):
+            base = "cudnn"
+        pkg = CUDA_SONAME_PKG.get(base) or ("libcudnn" if base == "cudnn" else None)
+        if not pkg:
+            sys.exit(f"stripped vendored CUDA lib {so} has no conda mapping; extend CUDA_SONAME_PKG")
+        pkgs.add(pkg)
+    log("borrowing CUDA bounds from the linux-64 wheel METADATA...")
+    borrowed = cuda_dep_map(parse_requires(
+        remote_metadata(version, flavour, py, "linux-64"), py, "linux-64"), flavour)
+    deps = []
+    for pkg in sorted(pkgs):
+        bound = borrowed.get(pkg, "")
+        if not cf_satisfiable(pkg, bound, subdir):
+            sys.exit(f"conda-forge cannot satisfy {pkg} {bound!r} on {subdir}: "
+                     "this cell is a grid hole, not publishable with honest metadata")
+        deps.append(f"{pkg} {bound}".strip())
+    return deps
 
 
 def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
@@ -1046,11 +1108,51 @@ def collect_paths(stage: Path, prefix_files: dict[str, str]) -> tuple[list[dict]
     return paths, files
 
 
+RELEASES = "https://github.com/Comfy-Forge/conda-torch/releases/download"
+SKIP_PUBLISHED = False  # set by --skip-published (CI): reuse published assets
+
+
+def asset_published(subdir: str, filename: str) -> bool:
+    req = urllib.request.Request(
+        f"{RELEASES}/{subdir}/{filename}", method="HEAD",
+        headers={"User-Agent": "conda-torch/0.1"})
+    try:
+        urllib.request.urlopen(req, timeout=30)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False
+        raise
+
+
 def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
-               prefix_files: dict[str, str]) -> Path:
-    paths, files = collect_paths(stage, prefix_files)
+               prefix_files: dict[str, str]) -> Path | None:
     name, version, build = index["name"], index["version"], index["build"]
     stem = f"{name}-{version}-{build}"
+    if SKIP_PUBLISHED and asset_published(index["subdir"], f"{stem}.conda"):
+        # a sibling run already built and published this exact artifact
+        # (shared libtorch across shims, shared nvshmem/triton across
+        # cells). Published artifacts are immutable — never rebuild them.
+        if (Path("meta") / index["subdir"] / f"{stem}.conda.json").exists():
+            log(f"SKIP {stem}: already published with fragment")
+            return None
+        log(f"{stem}: published but fragment missing; fetching published bytes")
+        out = outdir / f"{stem}.conda"
+        download(f"{RELEASES}/{index['subdir']}/{stem}.conda", out)
+        return out
+
+    paths, files = collect_paths(stage, prefix_files)
+
+    # very large payloads at zstd-19 can exhaust CI runner memory; drop to
+    # a cheaper level past 2 GiB raw and record that in about.json
+    raw_total = sum(p.get("size_in_bytes", 0) for p in paths)
+    level = 19 if raw_total < (2 << 30) else 11
+    about = dict(about)
+    if level != 19:
+        about.setdefault("extra", {})
+        about["extra"] = dict(about["extra"], zstd_level=level,
+                              zstd_note=f"level lowered from 19: {raw_total} raw bytes")
+        log(f"payload {raw_total} bytes raw: compressing at zstd level {level}")
 
     infodir = outdir / f"_info_{name}"
     if infodir.exists():
@@ -1065,7 +1167,7 @@ def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
         w("has_prefix", "".join(
             f"{PLACEHOLDER} {mode} {rel}\n" for rel, mode in sorted(prefix_files.items())))
 
-    cctx = zstandard.ZstdCompressor(level=19, threads=-1)
+    cctx = zstandard.ZstdCompressor(level=level, threads=-1)
 
     def make_tar_zst(base: Path, members: list[str], dest: Path) -> Path:
         with open(dest, "wb") as raw, cctx.stream_writer(raw) as zw, \
@@ -1125,7 +1227,13 @@ def main() -> None:
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--delete-wheel", action="store_true",
                     help="delete the wheel right after extraction (CI disk)")
+    ap.add_argument("--skip-published", action="store_true",
+                    help="skip building artifacts already on the release "
+                         "(shared libtorch/nvshmem/triton across cells)")
     args = ap.parse_args()
+    if args.skip_published:
+        global SKIP_PUBLISHED
+        SKIP_PUBLISHED = True
 
     if f"{sys.version_info.major}.{sys.version_info.minor}" != args.py:
         sys.exit(f"must run under python {args.py} for .pyc magic "
@@ -1167,10 +1275,23 @@ def main() -> None:
                               args.py, args.subdir)
     byte_compile(sp)
 
+    # ---- CUDA-ness guard: the flavour directory can serve tag-less wheels;
+    # version.py is the wheel's own statement of what it is --------------------
+    vpy = (sp / "torch" / "version.py").read_text(errors="replace")
+    m = re.search(r"^cuda[^=]*=\s*['\"]([0-9.]+)['\"]", vpy, re.M)
+    want_cuda = f"{args.flavour[2:-1]}.{args.flavour[-1]}"
+    if not m or m.group(1) != want_cuda:
+        sys.exit(f"torch/version.py says cuda={m.group(1) if m else None!r}, "
+                 f"flavour {args.flavour} wants {want_cuda!r}: refusing to publish "
+                 "a mislabeled build (CPU wheel or wrong flavour — report as hole)")
+
     # ---- platform split ----------------------------------------------------
     extra_lt_deps: list[str] = []
     if is_linux:
-        prefix_files = split_linux(sp, pt_stage, lt_stage, args.subdir)
+        prefix_files, stripped_cuda = split_linux(sp, pt_stage, lt_stage, args.subdir)
+        if stripped_cuda:
+            extra_lt_deps += vendored_cuda_dep_list(
+                stripped_cuda, args.version, args.flavour, args.py, args.subdir)
         nvshmem_req = next(((name, spec) for name, _, spec in requires
                             if nvidia_key(name) == "nvidia-nvshmem"), None)
         if nvshmem_req:
