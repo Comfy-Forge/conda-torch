@@ -1,0 +1,27 @@
+{
+ "arch": "aarch64",
+ "build": "cuda128_repack_h55f50501_0",
+ "build_number": 0,
+ "constrains": [
+  "pytorch 2.7.1 cuda128_repack_*"
+ ],
+ "depends": [
+  "__cuda",
+  "__glibc >=2.28",
+  "cuda-version >=12.8,<13",
+  "libgcc >=12",
+  "libgomp",
+  "libstdcxx >=12",
+  "libzlib"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "08f86a0e6eb7e93adea0f46c64c6e193",
+ "name": "libtorch",
+ "platform": "linux",
+ "sha256": "852d92918d7989a1f9566cd926a76375d11bdf69d667d8c1d8eb8e65aa1c8ed3",
+ "size": 1893150352,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788308719313,
+ "version": "2.7.1"
+}
