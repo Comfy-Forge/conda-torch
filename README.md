@@ -78,3 +78,31 @@ Non-negotiables, each one empirically earned:
   top of these).
 - `tools/fragment.py` — `.conda` → repodata fragment under `meta/`.
 - `tools/make_repodata.py` — fragments → `site/` (repodata + index page).
+
+## Channel status (2026-09-02)
+
+The full grid is live: every PyPI torch flavour (cu124+, latest patch per
+minor line, torch 2.4.1–2.14.0) on linux-64, linux-aarch64, and win-64 —
+~950 packages, ~117 GiB, all on free GitHub infrastructure. Mirrored
+conda-forge artifacts are byte-identical (their sha256s); repacked entries
+are CI-built from PyPI wheels and structurally verified; linux-64 spot
+checks ran real GPU compute through conda-forge CUDA libs.
+
+Known caveats, named rather than hidden:
+
+- **13 upstream holes**: wheel combos PyPI itself never published (listed in
+  `grid/README.md`), e.g. no aarch64 cu128 wheel for 2.8.0.
+- **2.7.1 cu129 linux-aarch64**: conda-forge's own build no longer solves
+  (their libcudss→libcudss0 migration broke it); no PyPI wheel exists either.
+  Mirrored for the record, effectively dead upstream-wide.
+- **2.10.0/2.11.0/2.12.1 cu129 linux-aarch64**: same conda-forge bitrot, but
+  PyPI wheels exist — `cuda129_repack` builds cover these cells.
+- **py3.15 records** exist but cannot solve until conda-forge ships python
+  3.15 (self-heals; final lands next month).
+- **2.11.0 cu128 / 2.13.0 cu129**: use the `_1` builds (build-number
+  tiebreaker picks them automatically); `_0` pinned a libcudnn that
+  conda-forge only built for CUDA 13 and can never install. The channel
+  carries `nvidia-cudnn` side-repacks for these.
+- Strict-channel-priority rule for maintainers: any package *name* this
+  channel carries must be carried completely (every version any dependent
+  pins) — one partial name shadows all of conda-forge's copies.
