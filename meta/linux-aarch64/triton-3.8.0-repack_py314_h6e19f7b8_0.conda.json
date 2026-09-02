@@ -1,0 +1,22 @@
+{
+ "arch": "aarch64",
+ "build": "repack_py314_h6e19f7b8_0",
+ "build_number": 0,
+ "depends": [
+  "__glibc >=2.28",
+  "libgcc",
+  "libstdcxx",
+  "libzlib",
+  "python >=3.14,<3.15.0a0",
+  "python_abi 3.14.* *_cp314"
+ ],
+ "license": "see-upstream",
+ "md5": "34cd53560649e3f04376667829197aad",
+ "name": "triton",
+ "platform": "linux",
+ "sha256": "f5ee28cee2d43a1f6fc88ca282f9ea5a7473b765a1360be46d00a8d2c657ca81",
+ "size": 146900131,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788336257451,
+ "version": "3.8.0"
+}
