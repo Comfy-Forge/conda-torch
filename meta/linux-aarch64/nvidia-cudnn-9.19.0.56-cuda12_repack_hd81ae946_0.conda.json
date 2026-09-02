@@ -1,0 +1,24 @@
+{
+ "arch": "aarch64",
+ "build": "cuda12_repack_hd81ae946_0",
+ "build_number": 0,
+ "depends": [
+  "__glibc >=2.28",
+  "cuda-version >=12,<13",
+  "cuda-cudart >=12,<13",
+  "libcublas",
+  "cuda-nvrtc",
+  "libzlib",
+  "libgcc",
+  "libstdcxx"
+ ],
+ "license": "LicenseRef-NVIDIA-SLA",
+ "md5": "1a59ed7d9ad360bfac5d0bbd04b70011",
+ "name": "nvidia-cudnn",
+ "platform": "linux",
+ "sha256": "00c7befa3fff25b38b4d6713b15fec4a3e7facd10e70fc15d3cfe7cda4e8e122",
+ "size": 458192662,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788345896927,
+ "version": "9.19.0.56"
+}
