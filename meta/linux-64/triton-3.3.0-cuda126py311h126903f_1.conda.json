@@ -1,0 +1,30 @@
+{
+ "build": "cuda126py311h126903f_1",
+ "build_number": 1,
+ "depends": [
+  "python",
+  "setuptools",
+  "cuda-nvcc-tools",
+  "cuda-cuobjdump",
+  "cuda-cudart",
+  "cuda-cupti",
+  "cuda-version >=12.6,<13",
+  "libstdcxx >=13",
+  "libgcc >=13",
+  "__glibc >=2.17,<3.0.a0",
+  "zstd >=1.5.7,<1.6.0a0",
+  "libzlib >=1.3.1,<2.0a0",
+  "cuda-cupti >=12.6.80,<13.0a0",
+  "python_abi 3.11.* *_cp311"
+ ],
+ "license": "MIT",
+ "license_family": "MIT",
+ "md5": "9818f7138d8492710e56d1c11fedf7f9",
+ "mirrored_from": "conda-forge",
+ "name": "triton",
+ "sha256": "51b81210150141bf04a0ec8ec82087a760b292351c8b219de441b8d95f811461",
+ "size": 163129335,
+ "subdir": "linux-64",
+ "timestamp": 1746164359955,
+ "version": "3.3.0"
+}
