@@ -1,0 +1,36 @@
+{
+ "arch": "x86_64",
+ "build": "cuda124_repack_h41ae334b_0",
+ "build_number": 0,
+ "constrains": [
+  "pytorch 2.4.1 cuda124_repack_*"
+ ],
+ "depends": [
+  "__cuda",
+  "cuda-cudart >=12.4.99,<13.0a0",
+  "cuda-cupti >=12.4.99,<13.0a0",
+  "cuda-nvrtc >=12.4.99,<13.0a0",
+  "cuda-version >=12.4,<13",
+  "intel-openmp",
+  "libcublas >=12.4.2.65,<13.0a0",
+  "libcudnn >=9.1.0.70,<10.0a0",
+  "libcufft >=11.2.0.44,<12.0a0",
+  "libcurand >=10.3.5.119,<11.0a0",
+  "libcusolver >=11.6.0.99,<12.0a0",
+  "libcusparse >=12.3.0.142,<13.0a0",
+  "libnvjitlink >=12.4.99,<13.0a0",
+  "ucrt >=10.0.20348.0",
+  "vc >=14.2,<15",
+  "vc14_runtime >=14.44"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "e29e1422f584083067586dc68e49cb5d",
+ "name": "libtorch",
+ "platform": "win",
+ "sha256": "2193d798f5f45ca6d1fe1db6f70ef86818cd4b4b774df19f57d84cec9996d085",
+ "size": 370406306,
+ "subdir": "win-64",
+ "timestamp": 1788320159249,
+ "version": "2.4.1"
+}
