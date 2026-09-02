@@ -1,0 +1,18 @@
+{
+ "arch": null,
+ "build": "sel_0",
+ "build_number": 0,
+ "depends": [
+  "pytorch * cuda126_*"
+ ],
+ "license": "MIT",
+ "md5": "57d75c39cd76543df5eabd011a7d1e87",
+ "name": "pytorch-cuda126",
+ "noarch": "generic",
+ "platform": null,
+ "sha256": "b3f9ab9714b1234cd2e66dcfe9a49b8935f012b181f93022ef38afb1efbfd8ff",
+ "size": 849,
+ "subdir": "noarch",
+ "timestamp": 1788374652487,
+ "version": "12.6"
+}

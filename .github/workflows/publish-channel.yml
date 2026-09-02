@@ -3,7 +3,7 @@ name: publish-channel
 on:
   push:
     branches: [main]
-    paths: ["meta/**", "tools/make_repodata.py", ".github/workflows/publish-channel.yml"]
+    paths: ["meta/**", "patches/**", "tools/make_repodata.py", ".github/workflows/publish-channel.yml"]
   workflow_dispatch:
 
 permissions:

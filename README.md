@@ -21,6 +21,34 @@ Flavour is encoded in the **build string**, never the version (conda orders
 pytorch 2.8.0 cuda128_repack_py312_h<hash>_0
 ```
 
+### Selecting a flavour
+
+Depend on the selector metapackage for your host's CUDA minor and nothing
+else:
+
+```toml
+[dependencies]
+pytorch-cuda128 = "*"        # any torch version, CUDA 12.8 builds only
+```
+
+Selectors exist per flavour (`pytorch-cuda124` … `pytorch-cuda132`) and pin
+`pytorch * cuda<NNN>_*`, matching every build convention in the channel
+(`_repack_`, `_mkl_`, `_generic_`). **Without a selector (or an explicit
+build glob), the solver may legally pick a different CUDA minor** — conda's
+`cuda-version` machinery only constrains the major, and build-number
+tiebreaks decide the rest. That's conda semantics, not a channel bug; use
+the selectors.
+
+Two more rules that are load-bearing:
+
+- **Channel order matters.** This channel first, conda-forge second. The
+  reversed order shadows `pytorch` behind conda-forge's coverage holes
+  under strict channel priority.
+- **Client floor**: pixi ≥ 0.40, conda ≥ 24.5, mamba/micromamba ≥ 2.0.
+  mamba/micromamba 1.x solves but then fails at fetch with a 404 (no
+  CEP-15 `base_url` support); condas predating repodata_version 2 reject
+  the channel outright.
+
 ## Architecture
 
 Static channel, zero servers, everything free-tier GitHub:
@@ -106,3 +134,17 @@ Known caveats, named rather than hidden:
 - Strict-channel-priority rule for maintainers: any package *name* this
   channel carries must be carried completely (every version any dependent
   pins) — one partial name shadows all of conda-forge's copies.
+
+## Metadata patches (patches/ overlay)
+
+`patches/<subdir>/patches.json` maps an exact `.conda` filename to a
+partial repodata override (allowed keys: `depends`, `constrains`,
+`purls`). `make_repodata.py` applies the overlay after loading fragments
+and before writing `site/`, so **published artifacts and their fragments
+stay immutable while served metadata stays fixable** — the same mechanism
+conda-forge uses (repodata patches). A patch naming a filename with no
+fragment is a hard error, so typos cannot silently no-op.
+
+When to patch vs republish: metadata-only fixes (a wrong bound, a missing
+purl) get a patch; anything touching bytes gets a republished artifact
+with a bumped build number.

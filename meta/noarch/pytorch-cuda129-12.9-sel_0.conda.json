@@ -1,0 +1,18 @@
+{
+ "arch": null,
+ "build": "sel_0",
+ "build_number": 0,
+ "depends": [
+  "pytorch * cuda129_*"
+ ],
+ "license": "MIT",
+ "md5": "38c121bbfc0e649808ea75b81c142f73",
+ "name": "pytorch-cuda129",
+ "noarch": "generic",
+ "platform": null,
+ "sha256": "452452745d2686b5d9be141140646b62158b3695e8c36d11c4abfa89f10053dc",
+ "size": 848,
+ "subdir": "noarch",
+ "timestamp": 1788374652698,
+ "version": "12.9"
+}
