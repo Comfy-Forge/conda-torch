@@ -4,23 +4,40 @@
 Split at conda-forge's line (measured against their real pytorch/libtorch
 packages, 2026-09):
 
-  libtorch  — the 9 big python-independent .so at $PREFIX/lib, real headers
-              at $PREFIX/include, cmake at $PREFIX/share/cmake, plus the
-              CUDA/openmp run deps. One per (version, flavour, platform).
-  pytorch   — the site-packages tree, with the big libs/headers/cmake as
-              relative symlinks back into $PREFIX, real libtorch_python.so
-              at $PREFIX/lib, byte-compiled .pyc, torchrun entry point.
-              One per python.
+  libtorch  — the big python-independent binaries, real headers, cmake,
+              plus the CUDA/openmp run deps. One per (version, flavour,
+              platform).
+  pytorch   — the site-packages tree, byte-compiled .pyc, torchrun entry
+              point, libtorch_python. One per python.
 
-Every transformation here is a mitigation from the five-hacker investigation;
-see README.md for the rationale of each. linux-64 only for now — other
-platforms fail loudly rather than half-work.
+Per-platform layout:
+
+  linux-64        big .so at $PREFIX/lib, symlinks back into torch/lib.
+  linux-aarch64   same, plus: vendored NVPL/ACL/gfortran go to the private
+                  $PREFIX/lib/libtorch-vendored/ (their top-level names
+                  would clobber libgfortran5 et al.), and the hard
+                  nvshmem dependency is repacked as its own package
+                  (conda-forge has no nvshmem at all).
+  win-64          site-packages is python-version-independent on Windows
+                  (Lib/site-packages), so libtorch ships the big DLLs,
+                  import libs, headers and cmake AT their wheel locations
+                  inside torch/ — no relocation, no symlinks, and both
+                  cpp_extension's -L/-I and the cmake IMPORTED_LOCATION
+                  checks keep working. Vendored CUDA DLLs and 2.7 GB of
+                  dead .lib archives are stripped; CUDA comes from
+                  conda-forge packages whose DLLs land in Library/bin
+                  (already on torch's own search path).
+
+Every transformation here is a mitigation from the five-hacker
+investigation; see README.md for the rationale of each.
 
 Usage:
-  torch_repack.py --version 2.8.0 --flavour cu128 --python 3.12 -o dist/
+  torch_repack.py --version 2.8.0 --flavour cu128 --python 3.12 \
+                  --subdir linux-64 -o dist/
 
 Must run under the exact python minor being targeted (for .pyc magic).
-Requires: zstandard (pip), patchelf >= 0.14 on PATH.
+Requires: zstandard (pip), patchelf >= 0.14 on PATH (linux subdirs), and
+pip's vendored distlib t64.exe (win-64 entry point launcher).
 """
 from __future__ import annotations
 
@@ -28,6 +45,7 @@ import argparse
 import compileall
 import py_compile
 import hashlib
+import io
 import json
 import os
 import re
@@ -61,9 +79,47 @@ if __name__ == '__main__':
     sys.exit(main())
 """.format(prefix=PLACEHOLDER)
 
-# The python-independent heavyweights (zero Py* symbols, verified): these move
-# to $PREFIX/lib in libtorch. libtorch_python.so is per-python and stays in
-# the pytorch package (also at $PREFIX/lib, conda-forge-style).
+# Windows: a distlib launcher .exe = t64.exe stub + shebang + zipped
+# __main__.py. The shebang is a dead build path by convention — the stub
+# falls back to ..\\python.exe next to Scripts/. conda-forge's own
+# torchrun.exe is built exactly like this (verified byte-for-byte: their
+# stub == pip's t64.exe) and ships with no prefix placeholder.
+WIN_SHEBANG = b"#!C:\\bld\\conda-torch\\_h_env\\python.exe\n"
+WIN_MAIN = (
+    b"import sys\n"
+    b"from torch.distributed.run import main\n"
+    b"if __name__ == '__main__':\n"
+    b"    if sys.argv[0].endswith('.exe'):\n"
+    b"        sys.argv[0] = sys.argv[0][:-4]\n"
+    b"    sys.exit(main())\n"
+)
+
+PLATFORMS = {
+    "linux-64": {
+        "arch": "x86_64", "platform": "linux",
+        "wheel_re": r"manylinux[^\"]*x86_64\.whl",
+        "markers": {"platform_system": "Linux", "platform_machine": "x86_64",
+                    "sys_platform": "linux", "os_name": "posix"},
+    },
+    "linux-aarch64": {
+        "arch": "aarch64", "platform": "linux",
+        "wheel_re": r"manylinux[^\"]*aarch64\.whl",
+        "markers": {"platform_system": "Linux", "platform_machine": "aarch64",
+                    "sys_platform": "linux", "os_name": "posix"},
+    },
+    "win-64": {
+        "arch": "x86_64", "platform": "win",
+        "wheel_re": r"win_amd64\.whl",
+        "markers": {"platform_system": "Windows", "platform_machine": "AMD64",
+                    "sys_platform": "win32", "os_name": "nt"},
+    },
+}
+
+# The python-independent heavyweights on linux-64 (zero Py* symbols,
+# verified): these move to $PREFIX/lib in libtorch. libtorch_python.so is
+# per-python and stays in the pytorch package (also at $PREFIX/lib,
+# conda-forge-style). On aarch64 the set is computed from the wheel
+# (extra members: libtorch_nvshmem.so and vendored NVPL/ACL libs).
 BIG_LIBS = [
     "libtorch_cuda.so",
     "libtorch_cpu.so",
@@ -75,8 +131,8 @@ BIG_LIBS = [
     "libcaffe2_nvrtc.so",
     "libtorch_global_deps.so",
 ]
-# Exactly the objects with a direct CUDA DT_NEEDED (patch set is proven
-# minimal; RPATH does not propagate between siblings).
+# linux-64: exactly the objects with a direct CUDA DT_NEEDED (patch set is
+# proven minimal; RPATH does not propagate between siblings).
 PATCH_LIBS = [
     "libtorch_cpu.so",
     "libtorch_cuda.so",
@@ -88,25 +144,34 @@ PATCH_LIBS = [
 ]
 # From site-packages/torch/lib, $PREFIX/lib is exactly four levels up.
 ADDED_RPATH = "$ORIGIN/../../../.."
+# aarch64 private dir for wheel-vendored libs whose top-level names would
+# clobber real conda-forge files ($PREFIX/lib/libgfortran.so.5 belongs to
+# libgfortran5, NVPL/ACL names could belong to future feedstocks). ABI
+# fidelity matters more than dedup here: torch pins an exact ACL build.
+VENDOR_DIR = "libtorch-vendored"
+VENDOR_PRIVATE = re.compile(r"^lib(arm_compute|nvpl_|gfortran)")
 
-# nvidia-*-cu12 wheel pin -> conda-forge package (all 14 verified to exist
-# with matching versions). 'cudnn' on conda-forge is a metapackage squatting
-# on the 8.x name — the real library is 'libcudnn'.
+# nvidia-* wheel pin -> conda-forge package (verified to exist with
+# matching versions; -cuNN suffix stripped before lookup). 'cudnn' on
+# conda-forge is a metapackage squatting on the 8.x name — the real
+# library is 'libcudnn'. 'nvidia-nvshmem' maps to OUR OWN repack (no
+# conda-forge nvshmem exists, verified 404).
 NVIDIA_MAP = {
-    "nvidia-cuda-runtime-cu12": "cuda-cudart",
-    "nvidia-cublas-cu12": "libcublas",
-    "nvidia-cudnn-cu12": "libcudnn",
-    "nvidia-cusparse-cu12": "libcusparse",
-    "nvidia-cufft-cu12": "libcufft",
-    "nvidia-curand-cu12": "libcurand",
-    "nvidia-cusolver-cu12": "libcusolver",
-    "nvidia-nccl-cu12": "nccl",
-    "nvidia-cuda-cupti-cu12": "cuda-cupti",
-    "nvidia-cuda-nvrtc-cu12": "cuda-nvrtc",
-    "nvidia-nvjitlink-cu12": "libnvjitlink",
-    "nvidia-cufile-cu12": "libcufile",
-    "nvidia-cusparselt-cu12": "cusparselt",
-    "nvidia-nvtx-cu12": "cuda-nvtx",
+    "nvidia-cuda-runtime": "cuda-cudart",
+    "nvidia-cublas": "libcublas",
+    "nvidia-cudnn": "libcudnn",
+    "nvidia-cusparse": "libcusparse",
+    "nvidia-cufft": "libcufft",
+    "nvidia-curand": "libcurand",
+    "nvidia-cusolver": "libcusolver",
+    "nvidia-nccl": "nccl",
+    "nvidia-cuda-cupti": "cuda-cupti",
+    "nvidia-cuda-nvrtc": "cuda-nvrtc",
+    "nvidia-nvjitlink": "libnvjitlink",
+    "nvidia-cufile": "libcufile",
+    "nvidia-cusparselt": "cusparselt",
+    "nvidia-nvtx": "cuda-nvtx",
+    "nvidia-nvshmem": "nvidia-nvshmem",
 }
 # Pure-python runtime deps: PyPI name -> conda-forge name.
 PY_DEP_MAP = {
@@ -119,6 +184,43 @@ PY_DEP_MAP = {
     "setuptools": "setuptools",
     "triton": "triton",
     "numpy": "numpy",
+}
+
+# --- win-64 payload surgery ------------------------------------------------
+# Vendored NVIDIA/OpenMP DLLs stripped from torch/lib: supplied instead by
+# conda-forge packages whose win builds ship the identical DLL basenames
+# into Library/bin (on torch's own search path via sys.exec_prefix). The
+# libiomp5md.dll strip pairs with an intel-openmp dependency — one OpenMP
+# runtime in the process, conda's. zlibwapi.dll is deliberately KEPT
+# (tiny, and conda-forge cudnn does not ship it under that name).
+WIN_STRIP_DLL = re.compile(
+    r"^(cudart64|cublas64|cublasLt64|cudnn|cufft64|cufftw64|cupti64"
+    r"|curand64|cusolver64|cusolverMg64|cusparse64|nvJitLink|nvrtc64"
+    r"|nvrtc-builtins64|libiomp5md)", re.IGNORECASE)
+# Dead static archives (~2.7 GB): nothing consumes them — cpp_extension
+# links exactly the torch six, and the cmake IMPORTED_IMPLIB checks cover
+# only c10/c10_cuda/torch_cpu/torch_cuda/torch (+ an optional kineto
+# lookup that warns, not errors). Strip by explicit list, never pattern.
+WIN_STRIP_LIB = {
+    "dnnl.lib", "libprotoc.lib", "libprotobuf.lib", "libprotobuf-lite.lib",
+    "sleef.lib", "microkernels-prod.lib", "XNNPACK.lib", "fmt.lib",
+    "fbgemm.lib", "pthreadpool.lib", "cpuinfo.lib", "libittnotify.lib",
+    "asmjit.lib", "kineto.lib",
+}
+# kineto.lib is in the strip list above ONLY if absent from this keep set;
+# cmake's unconditional append_torchlib_if_found(kineto) merely warns when
+# it is missing, but keeping it (99 MB) silences that for consumers.
+WIN_KEEP_LIB = {
+    "c10.lib", "c10_cuda.lib", "torch_cpu.lib", "torch_cuda.lib",
+    "torch.lib", "torch_python.lib", "_C.lib", "shm.lib",
+    "caffe2_nvrtc.lib", "kineto.lib",
+}
+# conda-forge CUDA packages backing the stripped DLLs (win has no
+# nccl/cufile/cusparselt/nvshmem). Lower bounds come from the linux
+# wheel's METADATA pins for the same (version, flavour).
+WIN_CUDA_PKGS = {
+    "cuda-cudart", "libcublas", "libcudnn", "libcusparse", "libcufft",
+    "libcurand", "libcusolver", "cuda-nvrtc", "libnvjitlink", "cuda-cupti",
 }
 
 
@@ -142,23 +244,28 @@ def log(msg: str) -> None:
 # wheel acquisition
 # --------------------------------------------------------------------------
 
-def fetch(url: str, timeout: int):
+def fetch(url: str, timeout: int, headers: dict | None = None):
     # download.pytorch.org 403s the default Python-urllib User-Agent
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "conda-torch/0.1 (+https://github.com/Comfy-Forge/conda-torch)"})
+    h = {"User-Agent": "conda-torch/0.1 (+https://github.com/Comfy-Forge/conda-torch)"}
+    h.update(headers or {})
+    req = urllib.request.Request(url, headers=h)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def wheel_url(version: str, flavour: str, py: str) -> str:
+def full_url(u: str) -> str:
+    return u if u.startswith("http") else "https://download.pytorch.org/" + u.lstrip("/")
+
+
+def wheel_url(version: str, flavour: str, py: str, subdir: str) -> str:
     cp = "cp" + py.replace(".", "")
     idx = f"https://download.pytorch.org/whl/{flavour}/torch/"
     html = fetch(idx, 60).read().decode()
-    pat = re.compile(r'href="([^"]*torch-%s%%2B%s-%s-%s-manylinux[^"]*x86_64\.whl)[#"]'
-                     % (re.escape(version), flavour, cp, cp))
+    pat = re.compile(r'href="([^"]*torch-%s%%2B%s-%s-%s-%s)[#"]'
+                     % (re.escape(version), flavour, cp, cp, PLATFORMS[subdir]["wheel_re"]))
     m = pat.search(html)
     if not m:
-        sys.exit(f"no linux x86_64 wheel for torch {version}+{flavour} {cp} on {idx}")
-    return m.group(1)
+        sys.exit(f"no {subdir} wheel for torch {version}+{flavour} {cp} on {idx}")
+    return full_url(m.group(1))
 
 
 def download(url: str, dest: Path) -> None:
@@ -173,23 +280,62 @@ def download(url: str, dest: Path) -> None:
     log(f"downloaded {dest.stat().st_size} bytes")
 
 
+class RangeFile(io.RawIOBase):
+    """Minimal random-access HTTP reader for zipfile (readinto-based)."""
+
+    def __init__(self, url: str):
+        self.url = url
+        with fetch(url, 60, {"Range": "bytes=0-0"}) as r:
+            cr = r.headers.get("Content-Range", "")
+        self._size = int(cr.rsplit("/", 1)[1])
+        self._pos = 0
+
+    def seek(self, off: int, whence: int = 0) -> int:
+        self._pos = {0: off, 1: self._pos + off, 2: self._size + off}[whence]
+        return self._pos
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seekable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, b) -> int:
+        if self._pos >= self._size:
+            return 0
+        end = min(self._pos + len(b), self._size) - 1
+        with fetch(self.url, 120, {"Range": f"bytes={self._pos}-{end}"}) as r:
+            data = r.read()
+        b[: len(data)] = data
+        self._pos += len(data)
+        return len(data)
+
+
+def remote_metadata(version: str, flavour: str, py: str, subdir: str) -> str:
+    """Range-read METADATA out of a wheel without downloading it."""
+    url = wheel_url(version, flavour, py, subdir)
+    zf = zipfile.ZipFile(io.BufferedReader(RangeFile(url), 256 * 1024))
+    name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+    return zf.read(name).decode(errors="replace")
+
+
 # --------------------------------------------------------------------------
 # metadata translation
 # --------------------------------------------------------------------------
 
-def parse_requires(dist_info: Path, py: str) -> list[tuple[str, str]]:
-    """Marker-evaluated Requires-Dist for linux-64/cpython: [(name, spec)]."""
-    env = {
-        "platform_system": "Linux",
-        "platform_machine": "x86_64",
-        "sys_platform": "linux",
-        "os_name": "posix",
+def parse_requires(metadata_text: str, py: str, subdir: str) -> list[tuple[str, str]]:
+    """Marker-evaluated Requires-Dist for the target platform: [(name, spec)]."""
+    env = dict(PLATFORMS[subdir]["markers"])
+    env.update({
         "python_version": py,
         "implementation_name": "cpython",
         "platform_python_implementation": "CPython",
-    }
+    })
     out = []
-    for line in (dist_info / "METADATA").read_text(errors="replace").splitlines():
+    for line in metadata_text.splitlines():
         if not line.strip():
             break
         if not line.lower().startswith("requires-dist:"):
@@ -222,6 +368,11 @@ def eval_marker(marker: str, env: dict[str, str]) -> bool:
     return bool(eval(expr, {"__builtins__": {}}))
 
 
+def nvidia_key(name: str) -> str | None:
+    base = re.sub(r"-cu\d+$", "", name)
+    return base if base in NVIDIA_MAP else None
+
+
 def translate_deps(requires: list[tuple[str, str]]) -> list[str]:
     """PyPI requirement list -> conda depends for the *pytorch* package.
 
@@ -229,7 +380,7 @@ def translate_deps(requires: list[tuple[str, str]]) -> list[str]:
     """
     deps = []
     for name, spec in requires:
-        if name in NVIDIA_MAP:
+        if nvidia_key(name):
             continue  # carried by libtorch
         if name not in PY_DEP_MAP:
             sys.exit(f"unmapped PyPI dependency {name!r} ({spec!r}); add it to PY_DEP_MAP")
@@ -240,6 +391,14 @@ def translate_deps(requires: list[tuple[str, str]]) -> list[str]:
             spec = (spec + "," if spec else "") + "<82"
         deps.append(f"{conda} {spec}".strip())
     return deps
+
+
+def cuda_bound(name: str, spec: str) -> str:
+    m = re.match(r"^==\s*([0-9][0-9.]*)$", spec)
+    if not m:
+        sys.exit(f"expected an exact pin for {name}, got {spec!r}")
+    v = m.group(1)
+    return f">={v},<{int(v.split('.')[0]) + 1}.0a0"
 
 
 def cuda_deps(requires: list[tuple[str, str]], flavour: str) -> list[str]:
@@ -253,18 +412,39 @@ def cuda_deps(requires: list[tuple[str, str]], flavour: str) -> list[str]:
     deps = ["__cuda", f"cuda-version >={cuda_minor},<{int(flavour[2:-1]) + 1}"]
     seen = set()
     for name, spec in requires:
-        if name not in NVIDIA_MAP:
+        key = nvidia_key(name)
+        if not key:
             continue
-        m = re.match(r"^==\s*([0-9][0-9.]*)$", spec)
-        if not m:
-            sys.exit(f"expected an exact pin for {name}, got {spec!r}")
-        v = m.group(1)
-        cap = int(v.split(".")[0]) + 1
-        deps.append(f"{NVIDIA_MAP[name]} >={v},<{cap}.0a0")
+        deps.append(f"{NVIDIA_MAP[key]} {cuda_bound(name, spec)}")
         seen.add(name)
     missing = {n for n, _ in requires if n.startswith("nvidia-")} - seen
     if missing:
         sys.exit(f"nvidia deps without a conda mapping: {missing}")
+    return deps
+
+
+def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
+    """win-64 libtorch CUDA deps.
+
+    The Windows wheel declares ZERO nvidia requirements (everything is
+    vendored), so lower bounds are borrowed from the linux wheel of the
+    same (version, flavour) — the same upstream build set — filtered to
+    the packages that actually back a stripped DLL.
+    """
+    cuda_minor = f"{flavour[2:-1]}.{flavour[-1]}"
+    deps = ["__cuda", f"cuda-version >={cuda_minor},<{int(flavour[2:-1]) + 1}"]
+    log("range-reading linux METADATA for CUDA lower bounds...")
+    linux_req = parse_requires(remote_metadata(version, flavour, py, "linux-64"),
+                               py, "linux-64")
+    found = set()
+    for name, spec in linux_req:
+        key = nvidia_key(name)
+        if key and NVIDIA_MAP[key] in WIN_CUDA_PKGS:
+            deps.append(f"{NVIDIA_MAP[key]} {cuda_bound(name, spec)}")
+            found.add(NVIDIA_MAP[key])
+    missing = WIN_CUDA_PKGS - found
+    if missing:
+        sys.exit(f"linux METADATA gave no pins for {missing}; cannot bound win deps")
     return deps
 
 
@@ -326,6 +506,329 @@ def sed_cmake(cmake_root: Path) -> None:
 def make_symlink(path: Path, target: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.symlink_to(target)
+
+
+def patch_rpath(target: Path, added: str) -> None:
+    run("patchelf", "--force-rpath", "--add-rpath", added, str(target))
+    got = subprocess.run(["patchelf", "--print-rpath", str(target)],
+                         capture_output=True, text=True, check=True).stdout
+    for entry in added.split(":"):
+        if entry not in got:
+            sys.exit(f"rpath patch did not stick on {target.name}: {got}")
+
+
+def extract_wheel(wheel: Path, sp: Path) -> None:
+    log("extracting wheel (enumerating the zip namelist, never top_level.txt)...")
+    zf = zipfile.ZipFile(wheel)
+    for zi in zf.infolist():
+        if zi.is_dir():
+            continue
+        dest = sp / zi.filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(zi) as src, open(dest, "wb") as dst:
+            shutil.copyfileobj(src, dst, 1 << 20)
+        mode = (zi.external_attr >> 16) & 0o7777
+        if mode:
+            os.chmod(dest, mode)
+    zf.close()
+
+
+def scrub_dist_info(sp: Path) -> Path:
+    """pip must never think it owns this. Returns the dist-info dir."""
+    dist_info = next(sp.glob("torch-*.dist-info"))
+    (dist_info / "RECORD").unlink()
+    (dist_info / "INSTALLER").write_bytes(b"conda")  # exactly 5 bytes, no \n
+    for junk in ("direct_url.json", "RECORD.jws", "REQUESTED"):
+        (dist_info / junk).unlink(missing_ok=True)
+    return dist_info
+
+
+def byte_compile(sp: Path) -> None:
+    # checked-hash .pyc: immune to the mtimes conda extraction produces
+    log("byte-compiling...")
+    for top in ("torch", "torchgen", "functorch"):
+        if (sp / top).is_dir():
+            compileall.compile_dir(sp / top, quiet=2, workers=0,
+                                   invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+
+
+def win_launcher_exe() -> bytes:
+    """distlib t64.exe stub + dead-path shebang + zipped __main__.py."""
+    stub = None
+    for mod in ("distlib", "pip._vendor.distlib"):
+        try:
+            m = __import__(mod, fromlist=["_"])
+        except ImportError:
+            continue
+        cand = Path(m.__file__).parent / "t64.exe"
+        if cand.exists():  # Debian-patched pips strip the launcher exes
+            stub = cand.read_bytes()
+            break
+    if stub is None:
+        sys.exit("no distlib t64.exe found (pip install distlib); needed for the win launcher")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        zi = zipfile.ZipInfo("__main__.py", date_time=(2020, 1, 1, 0, 0, 0))
+        z.writestr(zi, WIN_MAIN)
+    return stub + WIN_SHEBANG + buf.getvalue()
+
+
+# --------------------------------------------------------------------------
+# per-platform splits: populate lt_stage/pt_stage from the extracted wheel
+# --------------------------------------------------------------------------
+
+def split_linux64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
+    tlib = sp / "torch" / "lib"
+    (lt_stage / "lib").mkdir(parents=True)
+    for so in BIG_LIBS:
+        shutil.move(tlib / so, lt_stage / "lib" / so)
+        make_symlink(tlib / so, f"../../../../{so}")
+    # vendored OpenMP out, conda-forge libgomp in (soname-identical, dedupes)
+    gomp = list(tlib.glob("libgomp*"))
+    if len(gomp) != 1:
+        sys.exit(f"expected one vendored libgomp, found {gomp}")
+    gomp[0].unlink()
+
+    # libtorch_python.so is per-python: real at $PREFIX/lib in *pytorch*
+    (pt_stage / "lib").mkdir(exist_ok=True)
+    shutil.move(tlib / "libtorch_python.so", pt_stage / "lib" / "libtorch_python.so")
+    make_symlink(tlib / "libtorch_python.so", "../../../../libtorch_python.so")
+
+    move_headers_cmake(sp, lt_stage, ups=5)
+
+    log("patching RPATHs (--force-rpath: RUNPATH would lose to LD_LIBRARY_PATH)...")
+    for so in PATCH_LIBS:
+        target = (pt_stage / "lib" / so) if so == "libtorch_python.so" else (lt_stage / "lib" / so)
+        patch_rpath(target, ADDED_RPATH)
+    return {}
+
+
+def split_aarch64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
+    if (sp / "torch.libs").exists():
+        sys.exit("torch.libs/ present (auditwheel-mangled sonames): this is the "
+                 "CPU-wheel layout, which this pipeline does not target. The CUDA "
+                 "aarch64 wheels vendor in torch/lib with stock sonames.")
+    tlib = sp / "torch" / "lib"
+    (lt_stage / "lib" / VENDOR_DIR).mkdir(parents=True)
+
+    big, vendored = [], []
+    # regular .so files only: 2.9.0 aarch64 ships stray DIRECTORIES
+    # (libshm/, libshm_windows/) inside torch/lib — those stay put
+    for p in sorted(tlib.iterdir()):
+        so = p.name
+        if not p.is_file() or ".so" not in so:
+            continue
+        if so == "libtorch_python.so" or so.startswith("libgomp"):
+            continue
+        (vendored if VENDOR_PRIVATE.match(so) else big).append(so)
+    log(f"aarch64 split: {len(big)} big libs, {len(vendored)} vendored ({vendored})")
+
+    for so in big:
+        shutil.move(tlib / so, lt_stage / "lib" / so)
+        make_symlink(tlib / so, f"../../../../{so}")
+    for so in vendored:
+        shutil.move(tlib / so, lt_stage / "lib" / VENDOR_DIR / so)
+        make_symlink(tlib / so, f"../../../../{VENDOR_DIR}/{so}")
+    gomp = list(tlib.glob("libgomp*"))
+    if gomp:
+        for g in gomp:
+            g.unlink()
+
+    (pt_stage / "lib").mkdir(exist_ok=True)
+    shutil.move(tlib / "libtorch_python.so", pt_stage / "lib" / "libtorch_python.so")
+    make_symlink(tlib / "libtorch_python.so", "../../../../libtorch_python.so")
+
+    move_headers_cmake(sp, lt_stage, ups=5)
+
+    # Big libs may be opened directly ($ORIGIN = $PREFIX/lib) or through
+    # the torch/lib symlink ($ORIGIN = torch/lib — glibc expands from the
+    # opening path, not the realpath), so both spellings of both targets
+    # are needed. aarch64 wheels use bare RUNPATH=$ORIGIN, so every big
+    # lib gets patched (not just the CUDA-linked minimum).
+    added = ":".join([
+        ADDED_RPATH,
+        f"$ORIGIN/{VENDOR_DIR}",
+        f"$ORIGIN/../../../../{VENDOR_DIR}",
+    ])
+    log("patching RPATHs (aarch64: all big libs + vendored set)...")
+    for so in big:
+        patch_rpath(lt_stage / "lib" / so, added)
+    patch_rpath(pt_stage / "lib" / "libtorch_python.so", added)
+    for so in vendored:
+        target = lt_stage / "lib" / VENDOR_DIR / so
+        run("patchelf", "--force-rpath", "--set-rpath", "$ORIGIN:$ORIGIN/..", str(target))
+    return {}
+
+
+def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
+    """linux: real headers/cmake to $PREFIX, dir-symlinks back.
+
+    pybind11 stays REAL in the package: moving it would clobber
+    $PREFIX/include/pybind11 from the pybind11 package.
+    """
+    up = "../" * ups
+    tinc = sp / "torch" / "include"
+    (lt_stage / "include").mkdir()
+    for entry in sorted(tinc.iterdir()):
+        if entry.name == "pybind11":
+            continue
+        shutil.move(entry, lt_stage / "include" / entry.name)
+        make_symlink(tinc / entry.name, f"{up}include/{entry.name}")
+
+    tcmake = sp / "torch" / "share" / "cmake"
+    sed_cmake(tcmake)
+    (lt_stage / "share").mkdir()
+    shutil.move(tcmake, lt_stage / "share" / "cmake")
+    # link lives at torch/share/cmake, resolved from torch/share: 5 ups to $PREFIX
+    make_symlink(tcmake, f"{up}share/cmake")
+
+    # torch/bin stays fully real inside pytorch: torch_shm_manager MUST
+    # exist at $SP_DIR/torch/bin/ (import hard-fails otherwise) and protoc
+    # must NOT go to $PREFIX/bin (it would clobber libprotobuf's).
+
+
+def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
+    """Windows: no relocation at all. Lib/site-packages is python-version-
+    independent, so libtorch owns the big python-independent files AT
+    their wheel paths under torch/, and pytorch owns the rest. Strips:
+    vendored CUDA DLLs (conda-forge supplies identical basenames in
+    Library/bin, already on torch's search path), libiomp5md (intel-openmp
+    dep instead), and the dead .lib archives.
+    """
+    tlib = sp / "torch" / "lib"
+    stripped_dll, stripped_lib, kept_dll = [], [], []
+    for p in sorted(tlib.iterdir()):
+        if p.suffix.lower() == ".dll":
+            if WIN_STRIP_DLL.match(p.name):
+                stripped_dll.append(p.name)
+                p.unlink()
+            else:
+                kept_dll.append(p.name)
+        elif p.suffix.lower() == ".lib":
+            if p.name in WIN_STRIP_LIB and p.name not in WIN_KEEP_LIB:
+                stripped_lib.append(p.name)
+                p.unlink()
+            elif p.name not in WIN_KEEP_LIB:
+                kept_dll.append(p.name)  # unknown survivor: keep, python-independent
+    log(f"win strip: {len(stripped_dll)} DLLs ({stripped_dll}); "
+        f"{len(stripped_lib)} .lib ({stripped_lib}); kept {kept_dll}")
+    if "cudart64_12.dll" in kept_dll or not any(d.startswith("torch_cuda") for d in kept_dll):
+        sys.exit("win strip sanity check failed")
+
+    sed_cmake(sp / "torch" / "share" / "cmake")
+
+    # libtorch ownership: big DLLs + import libs (minus the per-python
+    # pair) + headers (minus pybind11) + cmake, at wheel paths.
+    sproot = "Lib/site-packages"
+    for p in sorted(tlib.iterdir()):
+        if p.name in ("torch_python.dll", "torch_python.lib", "_C.lib"):
+            continue  # per-python, stays in pytorch
+        rel = f"{sproot}/torch/lib/{p.name}"
+        (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(p, lt_stage / rel)
+    tinc = sp / "torch" / "include"
+    for entry in sorted(tinc.iterdir()):
+        if entry.name == "pybind11":
+            continue
+        rel = f"{sproot}/torch/include/{entry.name}"
+        (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(entry, lt_stage / rel)
+    rel = f"{sproot}/torch/share/cmake"
+    (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(sp / "torch" / "share" / "cmake", lt_stage / rel)
+
+    # entry point: single self-contained launcher, conda-forge-style
+    scripts = pt_stage / "Scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "torchrun.exe").write_bytes(win_launcher_exe())
+    return {}
+
+
+# --------------------------------------------------------------------------
+# nvshmem repack (aarch64 only; conda-forge has no nvshmem, verified 404)
+# --------------------------------------------------------------------------
+
+# sonames a repacked nvshmem lib may legitimately NEED without a mapping
+NVSHMEM_OK_NEEDED = re.compile(
+    r"^(libc|libm|libdl|librt|libpthread|ld-linux|libgcc_s|libstdc\+\+"
+    r"|libcudart|libcuda|libnvidia-ml|libnvshmem)")
+
+
+def build_nvshmem(pin_version: str, subdir: str, py: str,
+                  outdir: Path, work: Path, build_number: int) -> tuple[str, Path | None]:
+    """Repack nvidia-nvshmem-cu12 from PyPI into $PREFIX/lib.
+
+    Returns (conda dep string, built .conda path).
+    """
+    api = json.load(fetch(f"https://pypi.org/pypi/nvidia-nvshmem-cu12/{pin_version}/json", 60))
+    plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
+    urls = [f["url"] for f in api["urls"]
+            if f["filename"].endswith(".whl") and plat in f["filename"]]
+    if not urls:
+        sys.exit(f"no {plat} wheel for nvidia-nvshmem-cu12 {pin_version} on PyPI")
+    wheel = work / urls[0].rsplit("/", 1)[1]
+    download(urls[0], wheel)
+
+    stage = work / "nvshmem_stage"
+    if stage.exists():
+        shutil.rmtree(stage)
+    (stage / "lib").mkdir(parents=True)
+    zf = zipfile.ZipFile(wheel)
+    n_libs = 0
+    for zi in zf.infolist():
+        parts = PurePosixPath(zi.filename).parts
+        # nvidia/nvshmem/lib/** -> $PREFIX/lib (torch's rpath finds it via $ORIGIN)
+        if len(parts) >= 4 and parts[:3] == ("nvidia", "nvshmem", "lib"):
+            dest = stage / "lib" / Path(*parts[3:])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(zi) as src, open(dest, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            n_libs += 1
+    zf.close()
+    if n_libs == 0:
+        sys.exit("nvshmem wheel had no nvidia/nvshmem/lib payload")
+
+    dropped = []
+    for so in sorted((stage / "lib").rglob("*.so*")):
+        with open(so, "rb") as fh:
+            magic = fh.read(4)
+        if not (so.is_file() and magic == b"\x7fELF"):
+            continue
+        run("patchelf", "--force-rpath", "--set-rpath", "$ORIGIN", str(so))
+        needed = subprocess.run(["patchelf", "--print-needed", str(so)],
+                                capture_output=True, text=True, check=True).stdout.split()
+        outside = [d for d in needed if not NVSHMEM_OK_NEEDED.match(d)]
+        if outside:
+            # Optional dlopen'd transport/bootstrap plugins (UCX, ibverbs,
+            # libfabric...) would be unloadable without dragging the whole
+            # HPC network stack into every env. torch only hard-NEEDs
+            # libnvshmem_host; nvshmem probes transports and tolerates
+            # absent plugins. Core libs must resolve — hard-fail there.
+            if re.match(r"^nvshmem_(transport|bootstrap)_", so.name):
+                log(f"dropping optional plugin {so.name} (NEEDs {outside})")
+                dropped.append(so.name)
+                so.unlink()
+            else:
+                sys.exit(f"nvshmem CORE lib {so.name} NEEDs unexpected {outside}; "
+                         "add a conda mapping before shipping")
+
+    hsh = hashlib.sha256(f"nvidia-nvshmem|{pin_version}|cuda12".encode()).hexdigest()[:8]
+    index = {
+        "arch": PLATFORMS[subdir]["arch"], "platform": "linux", "subdir": subdir,
+        "name": "nvidia-nvshmem", "version": pin_version,
+        "build": f"cuda12_repack_h{hsh}_{build_number}", "build_number": build_number,
+        "depends": ["__glibc >=2.28", "cuda-version >=12,<13", "cuda-cudart >=12,<13",
+                    "libgcc", "libstdcxx"],
+        "license": "LicenseRef-NVIDIA-SLA", "timestamp": int(time.time() * 1000),
+    }
+    about = {"home": "https://developer.nvidia.com/nvshmem",
+             "summary": "NVSHMEM runtime, repacked from the official PyPI wheel "
+                        "(no conda-forge nvshmem exists)",
+             "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
+                       "dropped_optional_plugins": dropped}}
+    out = emit_conda(stage, outdir, index, about, {})
+    dep = f"nvidia-nvshmem >={pin_version},<{int(pin_version.split('.')[0]) + 1}"
+    return dep, out
 
 
 # --------------------------------------------------------------------------
@@ -424,7 +927,10 @@ def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
         z.write(info_blob, f"info-{stem}.tar.zst")
     shutil.rmtree(tmp)
     shutil.rmtree(infodir)
-    log(f"built {out.name}: {out.stat().st_size} bytes, sha256 {sha256_file(out)}")
+    size = out.stat().st_size
+    if size >= (2 << 30):
+        sys.exit(f"{out.name} is {size} bytes — over the 2 GiB release-asset cap")
+    log(f"built {out.name}: {size} bytes, sha256 {sha256_file(out)}")
     return out
 
 
@@ -437,21 +943,21 @@ def main() -> None:
     ap.add_argument("--version", required=True)
     ap.add_argument("--flavour", required=True, help="e.g. cu128")
     ap.add_argument("--python", dest="py", required=True, help="e.g. 3.12")
-    ap.add_argument("--subdir", default="linux-64")
+    ap.add_argument("--subdir", default="linux-64", choices=sorted(PLATFORMS))
     ap.add_argument("--build-number", type=int, default=0)
     ap.add_argument("-o", "--outdir", type=Path, default=Path("dist"))
     ap.add_argument("--wheel", type=Path, default=None,
                     help="use a pre-downloaded wheel instead of fetching")
     ap.add_argument("--work", type=Path, default=Path("work"))
+    ap.add_argument("--delete-wheel", action="store_true",
+                    help="delete the wheel right after extraction (CI disk)")
     args = ap.parse_args()
 
-    if args.subdir != "linux-64":
-        sys.exit(f"only linux-64 is implemented; {args.subdir} needs its own trap review "
-                 "(aarch64: nvshmem + torch.libs; win: DLL strategy)")
     if f"{sys.version_info.major}.{sys.version_info.minor}" != args.py:
         sys.exit(f"must run under python {args.py} for .pyc magic "
                  f"(running {sys.version_info.major}.{sys.version_info.minor})")
-    if shutil.which("patchelf") is None:
+    is_linux = args.subdir.startswith("linux")
+    if is_linux and shutil.which("patchelf") is None:
         sys.exit("patchelf not on PATH")
 
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -459,9 +965,10 @@ def main() -> None:
 
     wheel = args.wheel
     if wheel is None:
-        url = wheel_url(args.version, args.flavour, args.py)
+        url = wheel_url(args.version, args.flavour, args.py, args.subdir)
         wheel = args.work / PurePosixPath(url.split("#")[0]).name.replace("%2B", "+")
         download(url, wheel)
+    wheel_sha = sha256_file(wheel)
 
     # ---- extract full wheel into the pytorch stage -------------------------
     pt_stage = args.work / "pytorch_stage"
@@ -469,115 +976,77 @@ def main() -> None:
     for s in (pt_stage, lt_stage):
         if s.exists():
             shutil.rmtree(s)
-    sp_rel = Path(f"lib/python{args.py}/site-packages")
+    sp_rel = "Lib/site-packages" if args.subdir == "win-64" else f"lib/python{args.py}/site-packages"
     sp = pt_stage / sp_rel
     sp.mkdir(parents=True)
+    lt_stage.mkdir(parents=True)
 
-    log("extracting wheel (enumerating the zip namelist, never top_level.txt)...")
-    zf = zipfile.ZipFile(wheel)
-    for zi in zf.infolist():
-        if zi.is_dir():
-            continue
-        dest = sp / zi.filename
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(zi) as src, open(dest, "wb") as dst:
-            shutil.copyfileobj(src, dst, 1 << 20)
-        mode = (zi.external_attr >> 16) & 0o7777
-        if mode:
-            os.chmod(dest, mode)
-    zf.close()
+    extract_wheel(wheel, sp)
+    if args.delete_wheel:
+        wheel_name = wheel.name
+        wheel.unlink()
+    else:
+        wheel_name = wheel.name
 
-    dist_info = next(sp.glob("torch-*.dist-info"))
-    requires = parse_requires(dist_info, args.py)
+    dist_info = scrub_dist_info(sp)
+    requires = parse_requires((dist_info / "METADATA").read_text(errors="replace"),
+                              args.py, args.subdir)
+    byte_compile(sp)
 
-    # ---- dist-info: pip must never think it owns this ----------------------
-    (dist_info / "RECORD").unlink()
-    (dist_info / "INSTALLER").write_bytes(b"conda")  # exactly 5 bytes, no \n
-    for junk in ("direct_url.json", "RECORD.jws", "REQUESTED"):
-        (dist_info / junk).unlink(missing_ok=True)
+    # ---- platform split ----------------------------------------------------
+    extra_lt_deps: list[str] = []
+    nvshmem_pin = next((re.match(r"^==\s*([0-9][0-9.]*)$", spec).group(1)
+                        for name, spec in requires
+                        if nvidia_key(name) == "nvidia-nvshmem" and spec.startswith("==")), None)
+    if args.subdir == "linux-64":
+        prefix_files = split_linux64(sp, pt_stage, lt_stage)
+        if nvshmem_pin:
+            sys.exit("linux-64 wheel unexpectedly requires nvshmem; extend the split first")
+    elif args.subdir == "linux-aarch64":
+        prefix_files = split_aarch64(sp, pt_stage, lt_stage)
+        if nvshmem_pin:
+            log(f"repacking nvidia-nvshmem {nvshmem_pin} (hard DT_NEEDED, no conda-forge pkg)...")
+            build_nvshmem(nvshmem_pin, args.subdir, args.py,
+                          args.outdir, args.work, args.build_number)
+    else:
+        prefix_files = split_win64(sp, pt_stage, lt_stage)
 
-    # ---- byte-compile with the target interpreter (checked-hash: immune to
-    # the mtimes conda extraction produces) ---------------------------------
-    log("byte-compiling...")
-    for top in ("torch", "torchgen", "functorch"):
-        compileall.compile_dir(sp / top, quiet=2, workers=0,
-                               invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
-
-    # ---- split: big libs to $PREFIX/lib, symlinks back ---------------------
-    tlib = sp / "torch" / "lib"
-    (lt_stage / "lib").mkdir(parents=True)
-    for so in BIG_LIBS:
-        shutil.move(tlib / so, lt_stage / "lib" / so)
-        make_symlink(tlib / so, f"../../../../{so}")
-    # vendored OpenMP out, conda-forge libgomp in (soname-identical, dedupes)
-    gomp = list(tlib.glob("libgomp*"))
-    if len(gomp) != 1:
-        sys.exit(f"expected one vendored libgomp, found {gomp}")
-    gomp[0].unlink()
-
-    # libtorch_python.so is per-python: real at $PREFIX/lib in *pytorch*
-    (pt_stage / "lib").mkdir(exist_ok=True)
-    shutil.move(tlib / "libtorch_python.so", pt_stage / "lib" / "libtorch_python.so")
-    make_symlink(tlib / "libtorch_python.so", "../../../../libtorch_python.so")
-
-    # ---- headers: real in libtorch at $PREFIX/include, dir-symlinks back.
-    # pybind11 stays REAL in the package: moving it would clobber
-    # $PREFIX/include/pybind11 from the pybind11 package.
-    tinc = sp / "torch" / "include"
-    (lt_stage / "include").mkdir()
-    for entry in sorted(tinc.iterdir()):
-        if entry.name == "pybind11":
-            continue
-        shutil.move(entry, lt_stage / "include" / entry.name)
-        make_symlink(tinc / entry.name, f"../../../../../include/{entry.name}")
-
-    # ---- cmake: seds first, then real tree to $PREFIX/share/cmake ----------
-    tcmake = sp / "torch" / "share" / "cmake"
-    sed_cmake(tcmake)
-    (lt_stage / "share").mkdir()
-    shutil.move(tcmake, lt_stage / "share" / "cmake")
-    # link lives at torch/share/cmake, resolved from torch/share: 5 ups to $PREFIX
-    make_symlink(tcmake, "../../../../../share/cmake")
-
-    # torch/bin stays fully real inside pytorch: torch_shm_manager MUST exist
-    # at $SP_DIR/torch/bin/ (import hard-fails otherwise) and protoc must NOT
-    # go to $PREFIX/bin (it would clobber libprotobuf's).
-
-    # ---- patchelf ----------------------------------------------------------
-    log("patching RPATHs (--force-rpath: RUNPATH would lose to LD_LIBRARY_PATH)...")
-    for so in PATCH_LIBS:
-        target = (pt_stage / "lib" / so) if so == "libtorch_python.so" else (lt_stage / "lib" / so)
-        run("patchelf", "--force-rpath", "--add-rpath", ADDED_RPATH, str(target))
-        got = subprocess.run(["patchelf", "--print-rpath", str(target)],
-                             capture_output=True, text=True, check=True).stdout
-        if ADDED_RPATH not in got:
-            sys.exit(f"rpath patch did not stick on {so}: {got}")
-
-    # ---- entry point -------------------------------------------------------
-    bindir = pt_stage / "bin"
-    bindir.mkdir(exist_ok=True)
-    (bindir / "torchrun").write_text(TORCHRUN)
-    os.chmod(bindir / "torchrun", 0o755)
-    prefix_files = {"bin/torchrun": "text"}
+    # ---- entry point (POSIX; win handled inside split_win64) ---------------
+    if is_linux:
+        bindir = pt_stage / "bin"
+        bindir.mkdir(exist_ok=True)
+        (bindir / "torchrun").write_text(TORCHRUN)
+        os.chmod(bindir / "torchrun", 0o755)
+        prefix_files = dict(prefix_files)
+        prefix_files["bin/torchrun"] = "text"
     # torchfrtrace deliberately NOT generated: its module (tools.flight_recorder)
     # is not in the wheel; the upstream entry point is broken.
 
     # ---- metadata ----------------------------------------------------------
     flavour, py = args.flavour, args.py
+    plat = PLATFORMS[args.subdir]
     pytag = "py" + py.replace(".", "")
     now = int(time.time() * 1000)
-    lt_deps = cuda_deps(requires, flavour) + [
-        "libgomp", "libgcc >=12", "libstdcxx >=12", "__glibc >=2.28",
-    ]
+    if args.subdir == "win-64":
+        lt_deps = win_cuda_deps(args.version, flavour, py) + [
+            "intel-openmp", "ucrt >=10.0.20348.0", "vc >=14.2,<15",
+            "vc14_runtime >=14.44",
+        ]
+    else:
+        lt_deps = cuda_deps(requires, flavour) + [
+            "libgomp", "libgcc >=12", "libstdcxx >=12", "__glibc >=2.28",
+        ]
+        if args.subdir == "linux-aarch64":
+            lt_deps.append("libzlib")  # vendored gfortran/cudnn_graph NEED libz.so.1
     hsh = lambda s: hashlib.sha256(s.encode()).hexdigest()[:8]
     lt_build = f"cuda{flavour[2:]}_repack_h{hsh('libtorch|' + args.version + '|' + flavour)}_{args.build_number}"
     pt_build = f"cuda{flavour[2:]}_repack_{pytag}_h{hsh('pytorch|' + args.version + '|' + flavour + '|' + py)}_{args.build_number}"
 
     lt_index = {
-        "arch": "x86_64", "platform": "linux", "subdir": args.subdir,
+        "arch": plat["arch"], "platform": plat["platform"], "subdir": args.subdir,
         "name": "libtorch", "version": args.version,
         "build": lt_build, "build_number": args.build_number,
-        "depends": sorted(set(lt_deps)),
+        "depends": sorted(set(lt_deps + extra_lt_deps)),
         "constrains": [f"pytorch {args.version} cuda{flavour[2:]}_repack_*"],
         "license": "BSD-3-Clause", "license_family": "BSD",
         "timestamp": now,
@@ -589,7 +1058,7 @@ def main() -> None:
         f"libtorch {args.version} {lt_build}",
     ]
     pt_index = {
-        "arch": "x86_64", "platform": "linux", "subdir": args.subdir,
+        "arch": plat["arch"], "platform": plat["platform"], "subdir": args.subdir,
         "name": "pytorch", "version": args.version,
         "build": pt_build, "build_number": args.build_number,
         "depends": sorted(set(pt_deps)),
@@ -601,8 +1070,8 @@ def main() -> None:
         "home": "https://pytorch.org",
         "license": "BSD-3-Clause",
         "summary": "PyTorch, repacked byte-for-byte from the official PyPI wheel",
-        "description": f"Repacked from {wheel.name}. See github.com/Comfy-Forge/conda-torch.",
-        "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel)},
+        "description": f"Repacked from {wheel_name}. See github.com/Comfy-Forge/conda-torch.",
+        "extra": {"repacked_from": wheel_name, "wheel_sha256": wheel_sha},
     }
 
     emit_conda(lt_stage, args.outdir, lt_index, about, {})

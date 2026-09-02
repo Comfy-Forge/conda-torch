@@ -44,7 +44,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q patchelf zstd
-          pip install zstandard
+          pip install zstandard distlib
 
       - name: Repack
         run: |
@@ -53,26 +53,37 @@ jobs:
             --flavour "${{ inputs.flavour }}" \
             --python "${{ inputs.python }}" \
             --subdir "${{ inputs.platform }}" \
-            -o dist --work work
+            -o dist --work work --delete-wheel
           rm -rf work
           ls -la dist/
 
-      - name: Upload to release
+      - name: Upload to release (immutable — never overwrite an asset)
         run: |
           gh release create "${{ inputs.platform }}" \
             --title "${{ inputs.platform }} packages" \
             --notes "Storage release for ${{ inputs.platform }} subdir packages. Do not delete: repodata base_url points here." \
             || true
-          gh release upload "${{ inputs.platform }}" dist/*.conda --clobber
+          existing=$(gh release view "${{ inputs.platform }}" --json assets -q '.assets[].name')
+          for f in dist/*.conda; do
+            b=$(basename "$f")
+            if echo "$existing" | grep -qxF "$b"; then
+              echo "SKIP already-published $b (published artifacts are immutable)"
+              rm "$f"
+            else
+              gh release upload "${{ inputs.platform }}" "$f"
+            fi
+          done
 
       - name: Commit repodata fragments
         run: |
           for f in dist/*.conda; do
+            [ -e "$f" ] || continue
             python3 tools/fragment.py "$f" "${{ inputs.platform }}"
           done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add meta
+          git diff --cached --quiet && { echo "no new fragments"; exit 0; }
           git commit -m "Add fragments: torch ${{ inputs.version }} ${{ inputs.flavour }} py${{ inputs.python }} ${{ inputs.platform }}"
           for i in 1 2 3; do
             git push origin main && break
