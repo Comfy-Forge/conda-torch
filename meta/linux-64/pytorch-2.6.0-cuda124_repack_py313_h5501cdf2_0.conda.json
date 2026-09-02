@@ -1,0 +1,32 @@
+{
+ "arch": "x86_64",
+ "build": "cuda124_repack_py313_h5501cdf2_0",
+ "build_number": 0,
+ "constrains": [
+  "pytorch-cpu <0.0a0",
+  "pytorch-gpu <0.0a0"
+ ],
+ "depends": [
+  "filelock",
+  "fsspec",
+  "jinja2",
+  "libtorch 2.6.0 cuda124_repack_hcd6035d6_0",
+  "networkx",
+  "python >=3.13,<3.14.0a0",
+  "python_abi 3.13.* *_cp313",
+  "setuptools <82",
+  "sympy ==1.13.1",
+  "triton ==3.2.0",
+  "typing_extensions >=4.10.0"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "c2bc13d3fe497d9ba688490c97b1ea15",
+ "name": "pytorch",
+ "platform": "linux",
+ "sha256": "d3a31e364ec9bd451aa84e6d912f53c90eed1a1a6b206d7c0a1602eecaf1836c",
+ "size": 22755318,
+ "subdir": "linux-64",
+ "timestamp": 1788335088220,
+ "version": "2.6.0"
+}
