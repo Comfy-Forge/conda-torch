@@ -80,12 +80,15 @@ if __name__ == '__main__':
     sys.exit(main())
 """.format(prefix=PLACEHOLDER)
 
-# Windows: a distlib launcher .exe = t64.exe stub + shebang + zipped
-# __main__.py. The shebang is a dead build path by convention — the stub
-# falls back to ..\\python.exe next to Scripts/. conda-forge's own
-# torchrun.exe is built exactly like this (verified byte-for-byte: their
-# stub == pip's t64.exe) and ships with no prefix placeholder.
-WIN_SHEBANG = b"#!C:\\bld\\conda-torch\\_h_env\\python.exe\n"
+# Windows entry point: the classic conda-build PAIR — a plain setuptools
+# cli-64.exe launcher (runs its sibling torchrun-script.py) plus the
+# script as a TEXT file with a registered placeholder shebang. The
+# previous appended-archive form (distlib t64 + dead C:\bld shebang) was
+# dead on arrival: launcher.c passes unknown shebangs verbatim to
+# CreateProcessW with no fallback, and neither conda nor rattler rewrites
+# an unregistered binary shebang. Text prefix replacement is the one
+# mechanism both installers implement reliably on Windows. (conda-forge's
+# own torchrun.exe has the same dead-shebang defect.)
 WIN_MAIN = (
     b"import sys\n"
     b"from torch.distributed.run import main\n"
@@ -123,7 +126,18 @@ PLATFORMS = {
 # is per-python and stays in the pytorch package (at $PREFIX/lib,
 # conda-forge-style).
 # From site-packages/torch/lib, $PREFIX/lib is exactly four levels up.
+# RPATHs are SET wholesale, never appended: the wheel's inherited
+# $ORIGIN/../../nvidia/* entries resurrect the moment a pip nvidia-*
+# wheel lands in the env and outrank $PREFIX/lib (proven with a planted
+# cudart), and old wheels carry absolute /usr/local/cuda entries that
+# shadow the prefix on Jetson/SBSA boxes.
 ADDED_RPATH = "$ORIGIN/../../../.."
+# torch's own header trees — the ONLY ones relocated to $PREFIX/include.
+# Every third-party tree (google/, fmt/, dnnl*, sleef*, asmjit, fbgemm,
+# kineto, oneapi, KleidiAI, pybind11, ...) stays REAL in-package: at
+# $PREFIX/include it would silently clobber the libprotobuf / fmt /
+# onednn / sleef packages' headers on co-install.
+TORCH_OWN_HEADERS = {"ATen", "c10", "caffe2", "torch", "tensorpipe"}
 # aarch64 private dir for wheel-vendored libs whose top-level names would
 # clobber real conda-forge files ($PREFIX/lib/libgfortran.so.5 belongs to
 # libgfortran5, NVPL/ACL names could belong to future feedstocks). ABI
@@ -192,13 +206,33 @@ PY_DEP_MAP = {
 # Vendored NVIDIA/OpenMP DLLs stripped from torch/lib: supplied instead by
 # conda-forge packages whose win builds ship the identical DLL basenames
 # into Library/bin (on torch's own search path via sys.exec_prefix). The
-# libiomp5md.dll strip pairs with an intel-openmp dependency — one OpenMP
-# runtime in the process, conda's. zlibwapi.dll is deliberately KEPT
-# (tiny, and conda-forge cudnn does not ship it under that name).
+# libiomp* strip (runtime AND stubs — shipping a colliding copy of our own
+# intel-openmp dependency's DLL is indefensible) pairs with the
+# intel-openmp dep — one OpenMP runtime in the process, conda's.
+# zlibwapi.dll is deliberately KEPT (tiny, and conda-forge cudnn does not
+# ship it under that name).
 WIN_STRIP_DLL = re.compile(
     r"^(cudart64|cublas64|cublasLt64|cudnn|cufft64|cufftw64|cupti64"
     r"|curand64|cusolver64|cusolverMg64|cusparse64|nvJitLink|nvrtc64"
-    r"|nvrtc-builtins64|libiomp5md)", re.IGNORECASE)
+    r"|nvrtc-builtins64|libiomp)", re.IGNORECASE)
+# imported-basename -> conda-forge package. On Windows the basename IS
+# the soname: a version that exists is NOT enough, the exact DLL name
+# torch's PE import table demands must ship in the pinned window (CUPTI's
+# basename changes every CUDA minor — cupti64_2025.1.1.dll vs _2025.2.1;
+# the audit runs for every stripped basename on every flavour).
+WIN_DLL_PKG = [
+    (re.compile(r"^cudart64", re.I), "cuda-cudart"),
+    (re.compile(r"^cublas(lt)?64", re.I), "libcublas"),
+    (re.compile(r"^cudnn", re.I), "libcudnn"),
+    (re.compile(r"^cufftw?64", re.I), "libcufft"),
+    (re.compile(r"^cupti64", re.I), "cuda-cupti"),
+    (re.compile(r"^curand64", re.I), "libcurand"),
+    (re.compile(r"^cusolver(mg)?64", re.I), "libcusolver"),
+    (re.compile(r"^cusparse64", re.I), "libcusparse"),
+    (re.compile(r"^nvjitlink", re.I), "libnvjitlink"),
+    (re.compile(r"^nvrtc", re.I), "cuda-nvrtc"),
+    (re.compile(r"^libiomp", re.I), "intel-openmp"),
+]
 # Dead static archives (~2.7 GB): nothing consumes them — cpp_extension
 # links exactly the torch six, and the cmake IMPORTED_IMPLIB checks cover
 # only c10/c10_cuda/torch_cpu/torch_cuda/torch (+ an optional kineto
@@ -243,6 +277,113 @@ def log(msg: str) -> None:
 
 
 # --------------------------------------------------------------------------
+# licenses, provenance, ABI floors (hostile-review items 2, 4, 13)
+# --------------------------------------------------------------------------
+
+_LICENSE_NAME = re.compile(
+    r"(^|/)(AUTHORS|COPYING|COPYRIGHT|LICEN[CS]E|NOTICE|EULA|(THIRD|3RD)[-_]?PARTY)"
+    r"[^/]*$", re.I)
+_LICENSE_EXCLUDE = (".py", ".pyc", ".pyi", ".h", ".hpp", ".so", ".dll", ".lib",
+                    ".cmake", ".c", ".cpp", ".cu", ".cuh", ".exe")
+
+
+def wheel_license_files(wheel: Path) -> dict[str, bytes]:
+    """Every license-ish file in a wheel, keyed by a flattened unique name.
+
+    NVIDIA's redistribution terms permit shipping the runtime libraries ON
+    CONDITION the license text accompanies them — an output package must
+    never carry fewer license files than its source wheel."""
+    out: dict[str, bytes] = {}
+    with zipfile.ZipFile(wheel) as zf:
+        for zi in zf.infolist():
+            if zi.is_dir():
+                continue
+            n = zi.filename
+            if n.lower().endswith(_LICENSE_EXCLUDE):
+                continue
+            if _LICENSE_NAME.search(n) or "/licenses/" in n.lower():
+                out[n.replace("/", "_")] = zf.read(zi)
+    return out
+
+
+def license_gate(wheel: Path, pkg_name: str) -> dict[str, bytes]:
+    lics = wheel_license_files(wheel)
+    if not lics:
+        sys.exit(f"{wheel.name}: NO license files found in the source wheel — "
+                 f"refusing to publish {pkg_name} without knowing why")
+    log(f"{pkg_name}: carrying {len(lics)} license file(s): {sorted(lics)[:4]}...")
+    return lics
+
+
+def provenance() -> dict:
+    """CI build provenance for about.extra + the fragment (a published
+    .conda must be traceable to the workflow run and commit that built it)."""
+    out: dict[str, str] = {}
+    rid = os.environ.get("GITHUB_RUN_ID")
+    if rid:
+        repo = os.environ.get("GITHUB_REPOSITORY", "Comfy-Forge/conda-torch")
+        server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+        out["run_id"] = rid
+        out["run_url"] = f"{server}/{repo}/actions/runs/{rid}"
+    sha = os.environ.get("GITHUB_SHA")
+    if sha:
+        out["source_commit"] = sha
+    return out
+
+
+# GLIBCXX symbol version -> minimal GCC major (gcc.gnu.org abi.html)
+_GLIBCXX_GCC = {
+    "3.4.19": 5, "3.4.20": 5, "3.4.21": 5, "3.4.22": 6, "3.4.23": 7,
+    "3.4.24": 7, "3.4.25": 8, "3.4.26": 9, "3.4.27": 9, "3.4.28": 10,
+    "3.4.29": 11, "3.4.30": 12, "3.4.31": 13, "3.4.32": 13, "3.4.33": 14,
+    "3.4.34": 15,
+}
+
+
+def elf_floors(roots: list[Path]) -> tuple[str | None, int | None]:
+    """(max GLIBC_x.y, GCC major implied by max GLIBCXX) across every ELF
+    under roots — measured from the binaries, never pasted. A pasted
+    constant either excludes old distros for nothing (torch 2.4 needs only
+    2.17) or silently under-declares the next wheel era."""
+    max_glibc: V | None = None
+    max_cxx: str | None = None
+    for root in roots:
+        for p in sorted(root.rglob("*")):
+            if p.is_symlink() or not p.is_file():
+                continue
+            with open(p, "rb") as fh:
+                if fh.read(4) != b"\x7fELF":
+                    continue
+            txt = subprocess.run(["readelf", "-V", str(p)],
+                                 capture_output=True, text=True).stdout
+            for m in re.finditer(r"GLIBC_(\d+\.\d+)\b", txt):
+                v = V(m.group(1))
+                if max_glibc is None or v > max_glibc:
+                    max_glibc = v
+            for m in re.finditer(r"GLIBCXX_(3\.4\.\d+)\b", txt):
+                if max_cxx is None or V(m.group(1)) > V(max_cxx):
+                    max_cxx = m.group(1)
+    gcc = None
+    if max_cxx is not None:
+        gcc = _GLIBCXX_GCC.get(max_cxx)
+        if gcc is None:
+            log(f"WARNING: unknown GLIBCXX_{max_cxx}; assuming GCC 15 floor")
+            gcc = 15
+    return (max_glibc.s if max_glibc else None), gcc
+
+
+def floor_deps(roots: list[Path]) -> list[str]:
+    glibc, gcc = elf_floors(roots)
+    deps = []
+    if glibc:
+        deps.append(f"__glibc >={glibc}")
+    if gcc:
+        deps += [f"libstdcxx >={gcc}", "libgcc"]
+    log(f"measured ABI floors: glibc={glibc} gcc={gcc}")
+    return deps
+
+
+# --------------------------------------------------------------------------
 # wheel acquisition
 # --------------------------------------------------------------------------
 
@@ -258,7 +399,8 @@ def full_url(u: str) -> str:
     return u if u.startswith("http") else "https://download.pytorch.org/" + u.lstrip("/")
 
 
-def wheel_url(version: str, flavour: str, py: str, subdir: str) -> str:
+def wheel_url(version: str, flavour: str, py: str, subdir: str) -> tuple[str, str | None]:
+    """Returns (url, sha256-from-index-anchor-or-None)."""
     cp = "cp" + py.replace(".", "")
     idx = f"https://download.pytorch.org/whl/{flavour}/torch/"
     html = fetch(idx, 60).read().decode()
@@ -267,24 +409,52 @@ def wheel_url(version: str, flavour: str, py: str, subdir: str) -> str:
     # tagged name; fall back to tag-less. version.py is verified against
     # the flavour after extraction either way.
     for ver_pat in (re.escape(version) + "%2B" + flavour, re.escape(version)):
-        pat = re.compile(r'href="([^"]*torch-%s-%s-%s-%s)[#"]'
+        pat = re.compile(r'href="([^"]*torch-%s-%s-%s-%s)(?:#sha256=([0-9a-f]{64}))?"'
                          % (ver_pat, cp, cp, PLATFORMS[subdir]["wheel_re"]))
         m = pat.search(html)
         if m:
-            return full_url(m.group(1))
+            return full_url(m.group(1)), m.group(2)
     sys.exit(f"no {subdir} wheel for torch {version}+{flavour} {cp} on {idx}")
 
 
-def download(url: str, dest: Path) -> None:
-    if dest.exists():
+def download(url: str, dest: Path, expect_sha: str | None = None) -> None:
+    """Download with mandatory hash verification when a hash is known.
+
+    A cached file is re-verified too: the hash protects against a poisoned
+    CDN response, and the recorded provenance must never notarize whatever
+    happened to arrive.
+    """
+    if not dest.exists():
+        log(f"downloading {url}")
+        tmp = dest.with_suffix(".part")
+        with fetch(url, 120) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f, 1 << 22)
+        tmp.rename(dest)
+        log(f"downloaded {dest.stat().st_size} bytes")
+    else:
         log(f"wheel already present: {dest}")
-        return
-    log(f"downloading {url}")
-    tmp = dest.with_suffix(".part")
-    with fetch(url, 120) as r, open(tmp, "wb") as f:
-        shutil.copyfileobj(r, f, 1 << 22)
-    tmp.rename(dest)
-    log(f"downloaded {dest.stat().st_size} bytes")
+    if expect_sha:
+        got = sha256_file(dest)
+        if got != expect_sha:
+            dest.unlink()
+            sys.exit(f"SHA256 MISMATCH for {dest.name}: expected {expect_sha}, "
+                     f"got {got} — refusing to build from unverified bytes")
+
+
+def grid_wheel_sha(version: str, flavour: str, subdir: str, py: str) -> str | None:
+    """The wheel_sha256 grid.json recorded for this cell, if any."""
+    grid = Path(__file__).resolve().parent.parent / "grid" / "grid.json"
+    if not grid.exists():
+        return None
+    g = json.loads(grid.read_text())
+    pynum = py.replace(".", "")
+    for ent in g.get("entries", []):
+        if (ent.get("torch_version") == version and ent.get("flavour") == flavour
+                and ent.get("platform") == subdir):
+            for r in ent.get("records", []):
+                if r.get("python") == pynum and r.get("wheel_sha256"):
+                    return r["wheel_sha256"]
+    return None
 
 
 class RangeFile(io.RawIOBase):
@@ -323,7 +493,7 @@ class RangeFile(io.RawIOBase):
 
 def remote_metadata(version: str, flavour: str, py: str, subdir: str) -> str:
     """Range-read METADATA out of a wheel without downloading it."""
-    url = wheel_url(version, flavour, py, subdir)
+    url, _ = wheel_url(version, flavour, py, subdir)
     zf = zipfile.ZipFile(io.BufferedReader(RangeFile(url), 256 * 1024))
     name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
     return zf.read(name).decode(errors="replace")
@@ -646,10 +816,12 @@ def cf_satisfiable_in_window(pkg: str, spec: str, subdir: str, window: str) -> b
 
 # conda-forge CUDA lib names that have a PyPI-wheel fallback when no
 # conda-forge build fits the entry's cuda-version window. The fallback
-# name is deliberately ABSENT from conda-forge, so strict channel
-# priority can never shadow their line (the triton lesson: a name
-# carried at all must be carried completely).
-NVIDIA_FALLBACK = {"libcudnn": "nvidia-cudnn"}
+# publishes under the SAME conda-forge name (libcudnn): a second name
+# with the same lib paths made an ordinary solve install both copies
+# with no mutex and clobber torch's cudnn (proven env-breaker). Carrying
+# the cf name obliges the completeness rule — the channel mirrors cf's
+# libcudnn line alongside (the triton doctrine).
+NVIDIA_FALLBACK = {"libcudnn": "libcudnn"}
 _CF_CUDA_PKGS = set(NVIDIA_MAP.values()) | set(CUDA_TOOLKIT_EXTRAS.values())
 
 
@@ -678,7 +850,7 @@ def fix_window_unsat(deps: list[str], requires, flavour: str, subdir: str,
         pin = spec_floor(req[1])
         log(f"{pkg} {spec!r} UNSAT inside cuda-version {window} on {subdir}: "
             f"side-repacking {req[0]} {pin} as {NVIDIA_FALLBACK[pkg]}")
-        build_nvidia_lib(req[0], pin, subdir, outdir, work)
+        build_nvidia_lib(req[0], pin, subdir, outdir, work, NVIDIA_FALLBACK[pkg])
         out.append(f"{NVIDIA_FALLBACK[pkg]} >={pin},<{int(pin.split('.')[0]) + 1}.0a0")
     return out
 
@@ -743,13 +915,39 @@ def make_symlink(path: Path, target: str) -> None:
     path.symlink_to(target)
 
 
-def patch_rpath(target: Path, added: str) -> None:
-    run("patchelf", "--force-rpath", "--add-rpath", added, str(target))
+def patch_rpath(target: Path, rpath: str) -> None:
+    """REPLACE the RPATH wholesale (--set-rpath + --force-rpath).
+
+    Never --add-rpath: appending keeps the wheel's entries in front (the
+    pip-hijack and /usr/local/cuda hazards, see ADDED_RPATH comment)."""
+    for entry in rpath.split(":"):
+        if not entry or not entry.startswith("$ORIGIN"):
+            sys.exit(f"refusing non-$ORIGIN rpath entry {entry!r} for {target.name}")
+    run("patchelf", "--force-rpath", "--set-rpath", rpath, str(target))
     got = subprocess.run(["patchelf", "--print-rpath", str(target)],
-                         capture_output=True, text=True, check=True).stdout
-    for entry in added.split(":"):
-        if entry not in got:
-            sys.exit(f"rpath patch did not stick on {target.name}: {got}")
+                         capture_output=True, text=True, check=True).stdout.strip()
+    if got != rpath:
+        sys.exit(f"rpath set did not stick on {target.name}: {got!r}")
+
+
+def scrub_site_elfs(pt_stage: Path, sp: Path) -> None:
+    """Every remaining ELF in site-packages gets a clean RPATH: $ORIGIN
+    plus the relative hop to $PREFIX/lib. Kills the wheel's dormant
+    nvidia/* entries on torch/_C and upstream's /lib/intel64 +
+    /usr/local/cuda junk on functorch/_C (which --force-rpath would
+    otherwise have PROMOTED from RUNPATH to RPATH)."""
+    lib = pt_stage / "lib"
+    n = 0
+    for p in sorted(sp.rglob("*")):
+        if p.is_symlink() or not p.is_file():
+            continue
+        with open(p, "rb") as fh:
+            if fh.read(4) != b"\x7fELF":
+                continue
+        rel = os.path.relpath(lib, p.parent)
+        patch_rpath(p, f"$ORIGIN:$ORIGIN/{rel}")
+        n += 1
+    log(f"scrubbed RPATHs on {n} site-packages ELFs")
 
 
 def extract_wheel(wheel: Path, sp: Path) -> None:
@@ -778,34 +976,145 @@ def scrub_dist_info(sp: Path) -> Path:
     return dist_info
 
 
-def byte_compile(sp: Path) -> None:
-    # checked-hash .pyc: immune to the mtimes conda extraction produces
-    log("byte-compiling...")
+def byte_compile(sp: Path, sp_rel: str) -> None:
+    # checked-hash .pyc: immune to the mtimes conda extraction produces.
+    # ddir makes co_filename ENV-RELATIVE — without it every traceback,
+    # pdb session and inspect.getsource on a user machine points at the
+    # phantom CI staging dir with no source lines.
+    log("byte-compiling (env-relative co_filename)...")
     for top in ("torch", "torchgen", "functorch"):
         if (sp / top).is_dir():
             compileall.compile_dir(sp / top, quiet=2, workers=0,
+                                   ddir=f"{sp_rel}/{top}",
                                    invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+    pyc_check(sp, sp_rel)
 
 
-def win_launcher_exe() -> bytes:
-    """distlib t64.exe stub + dead-path shebang + zipped __main__.py."""
-    stub = None
-    for mod in ("distlib", "pip._vendor.distlib"):
-        try:
-            m = __import__(mod, fromlist=["_"])
-        except ImportError:
+def pyc_check(sp: Path, sp_rel: str) -> None:
+    import marshal
+    pyc = next((sp / "torch" / "__pycache__").glob("__init__.*.pyc"), None)
+    if pyc is None:
+        sys.exit("byte-compile produced no torch/__pycache__/__init__ .pyc")
+    code = marshal.loads(pyc.read_bytes()[16:])
+    if not code.co_filename.startswith(sp_rel):
+        sys.exit(f".pyc co_filename {code.co_filename!r} is not env-relative "
+                 f"(wanted prefix {sp_rel!r})")
+    log(f".pyc co_filename verified: {code.co_filename}")
+
+
+def win_launcher_stub() -> bytes:
+    """setuptools' cli-64.exe: a plain launcher that runs its sibling
+    <name>-script.py, reading the script's own (prefix-rewritten) shebang.
+    Debian-patched installs strip the .exe files — fall back to pulling
+    the wheel straight from PyPI."""
+    try:
+        m = __import__("setuptools")
+        cand = Path(m.__file__).parent / "cli-64.exe"
+        if cand.exists():
+            return cand.read_bytes()
+    except ImportError:
+        pass
+    log("installed setuptools has no cli-64.exe (Debian strip?); fetching the wheel")
+    url, sha = pypi_wheel_url("setuptools", "80.9.0", ["py3-none-any"])
+    dest = Path("/tmp/_setuptools_launcher.whl")
+    download(url, dest, sha)
+    with zipfile.ZipFile(dest) as zf:
+        return zf.read("setuptools/cli-64.exe")
+
+
+def win_launcher_pair(scripts: Path, prefix_files: dict[str, str]) -> None:
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "torchrun.exe").write_bytes(win_launcher_stub())
+    (scripts / "torchrun-script.py").write_text(
+        "#!" + PLACEHOLDER + "/python.exe\n" + WIN_MAIN.decode())
+    prefix_files["Scripts/torchrun-script.py"] = "text"
+
+
+def pe_imports(path: Path) -> set[str]:
+    """Imported DLL basenames from a PE's import + delay-import tables."""
+    import pefile
+    pe = pefile.PE(str(path), fast_load=True)
+    pe.parse_data_directories(directories=[
+        pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
+        pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"]])
+    out = set()
+    for attr in ("DIRECTORY_ENTRY_IMPORT", "DIRECTORY_ENTRY_DELAY_IMPORT"):
+        for entry in getattr(pe, attr, None) or []:
+            out.add(entry.dll.decode(errors="replace"))
+    pe.close()
+    return out
+
+
+def cf_dll_basenames(pkg: str, subdir: str, version: str) -> set[str]:
+    """Library/bin DLL basenames shipped by the newest conda-forge build of
+    pkg==version on subdir (paths.json range-read from the artifact)."""
+    cands = [f for f in cf_files(pkg)
+             if f.get("attrs", {}).get("subdir") == subdir
+             and f["version"] == version and f["basename"].endswith(".conda")]
+    if not cands:
+        return set()
+    best = max(cands, key=lambda f: f.get("attrs", {}).get("build_number", 0))
+    url = "https://conda.anaconda.org/conda-forge/" + best["basename"]
+    zf = zipfile.ZipFile(io.BufferedReader(RangeFile(url), 256 * 1024))
+    info = next(n for n in zf.namelist() if n.startswith("info-"))
+    raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(zf.read(info))).read()
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
+        paths = json.load(tf.extractfile("info/paths.json"))
+    return {PurePosixPath(p["_path"]).name.lower() for p in paths["paths"]
+            if p["_path"].lower().startswith("library/bin/")
+            and p["_path"].lower().endswith(".dll")}
+
+
+def win_basename_audit(imports: set[str], stripped: list[str],
+                       deps: list[str], flavour: str) -> list[str]:
+    """Narrow win CUDA dep bounds so every needed DLL BASENAME provably
+    ships inside the pinned window. A satisfiable version is not enough:
+    cupti's basename changes every CUDA minor, so the wide window installs
+    a package that does not contain the name torch imports and the eager
+    loader 'tolerates' the miss into `DLL load failed`."""
+    strippedset = {s.lower() for s in stripped}
+    needed: dict[str, set[str]] = {}
+    for imp in sorted(imports):
+        if imp.lower() not in strippedset:
             continue
-        cand = Path(m.__file__).parent / "t64.exe"
-        if cand.exists():  # Debian-patched pips strip the launcher exes
-            stub = cand.read_bytes()
-            break
-    if stub is None:
-        sys.exit("no distlib t64.exe found (pip install distlib); needed for the win launcher")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
-        zi = zipfile.ZipInfo("__main__.py", date_time=(2020, 1, 1, 0, 0, 0))
-        z.writestr(zi, WIN_MAIN)
-    return stub + WIN_SHEBANG + buf.getvalue()
+        for pat, pkg in WIN_DLL_PKG:
+            if pat.match(imp):
+                needed.setdefault(pkg, set()).add(imp.lower())
+                break
+        else:
+            sys.exit(f"stripped DLL {imp} is imported by torch but has no "
+                     "package mapping; extend WIN_DLL_PKG")
+    out = []
+    for d in deps:
+        pkg, _, spec = d.partition(" ")
+        if pkg not in needed or pkg == "intel-openmp":
+            out.append(d)
+            continue
+        want = needed[pkg]
+        lo = next((v for op, v in pep_clauses(spec) if op == ">="), None)
+        hi = next((v for op, v in pep_clauses(spec) if op == "<"), None)
+        vers = sorted((v for v in cf_versions(pkg, "win-64")
+                       if _spec_admits(v, spec)), key=V, reverse=True)
+        if not vers:
+            sys.exit(f"{pkg} {spec!r}: no win-64 conda-forge version in window at all")
+        ok = [v for v in vers if want <= cf_dll_basenames(pkg, "win-64", v)]
+        if not ok:
+            sys.exit(f"{pkg}: NO conda-forge win-64 build in {spec!r} ships "
+                     f"{sorted(want)} — unfixable basename gap, report as hole")
+        if len(ok) == len(vers):
+            out.append(d)  # basename stable across the whole window
+            continue
+        # basename is minor-versioned: narrow to the ok set's window
+        lo2 = min(ok, key=V)
+        hi_parts = max(ok, key=V).split(".")
+        hi2 = f"{hi_parts[0]}.{int(hi_parts[1]) + 1}"
+        newd = f"{pkg} >={max(lo or '0', lo2, key=V)},<{min(hi or hi2, hi2, key=V)}"
+        log(f"basename audit: {d!r} -> {newd!r} (only {ok} ship {sorted(want)})")
+        out.append(newd)
+    for pkg in needed:
+        if not any(d.split(" ", 1)[0] == pkg for d in deps):
+            sys.exit(f"torch imports {sorted(needed[pkg])} but {pkg} is not in deps")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -860,21 +1169,23 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[s
     # Big libs may be opened directly ($ORIGIN = $PREFIX/lib) or through
     # the torch/lib symlink ($ORIGIN = torch/lib — glibc expands from the
     # opening path, not the realpath), so both spellings of both targets
-    # are needed. Every big lib gets patched with --force-rpath (a
-    # RUNPATH would lose to LD_LIBRARY_PATH); patching non-CUDA libs too
-    # is harmless and keeps the two linux subdirs identical.
-    added = ":".join([
+    # are needed. Every big lib gets a wholesale --set-rpath with
+    # --force-rpath (a RUNPATH would lose to LD_LIBRARY_PATH); patching
+    # non-CUDA libs too is harmless and keeps the two linux subdirs
+    # identical.
+    full = ":".join([
+        "$ORIGIN",
         ADDED_RPATH,
         f"$ORIGIN/{VENDOR_DIR}",
         f"$ORIGIN/../../../../{VENDOR_DIR}",
     ])
-    log("patching RPATHs (all big libs + vendored set, --force-rpath)...")
+    log("setting clean RPATHs (all big libs + vendored set, --force-rpath)...")
     for so in big:
-        patch_rpath(lt_stage / "lib" / so, added)
-    patch_rpath(pt_stage / "lib" / "libtorch_python.so", added)
+        patch_rpath(lt_stage / "lib" / so, full)
+    patch_rpath(pt_stage / "lib" / "libtorch_python.so", full)
     for so in vendored:
-        target = lt_stage / "lib" / VENDOR_DIR / so
-        run("patchelf", "--force-rpath", "--set-rpath", "$ORIGIN:$ORIGIN/..", str(target))
+        patch_rpath(lt_stage / "lib" / VENDOR_DIR / so, "$ORIGIN:$ORIGIN/..")
+    scrub_site_elfs(pt_stage, sp)
     return {}, stripped_cuda
 
 
@@ -919,8 +1230,8 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
     tinc = sp / "torch" / "include"
     (lt_stage / "include").mkdir()
     for entry in sorted(tinc.iterdir()):
-        if entry.name == "pybind11":
-            continue
+        if entry.name not in TORCH_OWN_HEADERS:
+            continue  # third-party trees stay real in-package (clobber hazard)
         shutil.move(entry, lt_stage / "include" / entry.name)
         make_symlink(tinc / entry.name, f"{up}include/{entry.name}")
 
@@ -936,15 +1247,24 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
     # must NOT go to $PREFIX/bin (it would clobber libprotobuf's).
 
 
-def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
+def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> tuple[dict[str, str], set[str], list[str]]:
     """Windows: no relocation at all. Lib/site-packages is python-version-
     independent, so libtorch owns the big python-independent files AT
     their wheel paths under torch/, and pytorch owns the rest. Strips:
     vendored CUDA DLLs (conda-forge supplies identical basenames in
-    Library/bin, already on torch's search path), libiomp5md (intel-openmp
-    dep instead), and the dead .lib archives.
+    Library/bin, already on torch's search path), libiomp*/stubs
+    (intel-openmp dep instead), and the dead .lib archives.
+
+    Returns (prefix_files, union of PE-imported basenames of torch's own
+    kept DLLs, stripped DLL names) for the basename audit.
     """
     tlib = sp / "torch" / "lib"
+    # parse imports BEFORE stripping: the import table of the KEPT DLLs
+    # names exactly the basenames conda-forge must supply
+    imports: set[str] = set()
+    for p in sorted(tlib.glob("*.dll")):
+        if not WIN_STRIP_DLL.match(p.name):
+            imports |= pe_imports(p)
     stripped_dll, stripped_lib, kept_dll = [], [], []
     for p in sorted(tlib.iterdir()):
         if p.suffix.lower() == ".dll":
@@ -986,11 +1306,10 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> dict[str, str]:
     (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
     shutil.move(sp / "torch" / "share" / "cmake", lt_stage / rel)
 
-    # entry point: single self-contained launcher, conda-forge-style
-    scripts = pt_stage / "Scripts"
-    scripts.mkdir(parents=True, exist_ok=True)
-    (scripts / "torchrun.exe").write_bytes(win_launcher_exe())
-    return {}
+    # entry point: launcher + registered text script (see WIN_MAIN comment)
+    prefix_files: dict[str, str] = {}
+    win_launcher_pair(pt_stage / "Scripts", prefix_files)
+    return prefix_files, imports, stripped_dll
 
 
 # --------------------------------------------------------------------------
@@ -1004,17 +1323,19 @@ NVSHMEM_OK_NEEDED = re.compile(
     r"|libcudart|libcuda|libnvidia-ml|libnvshmem)")
 
 
-def pypi_wheel_url(pypi_name: str, version: str, want: list[str]) -> str:
-    """URL of the first wheel for pypi_name==version matching all `want`
-    substrings (falling back to a py3-none-any wheel)."""
+def pypi_wheel_url(pypi_name: str, version: str, want: list[str]) -> tuple[str, str]:
+    """(url, sha256) of the first wheel for pypi_name==version matching all
+    `want` substrings (falling back to a py3-none-any wheel). PyPI's JSON
+    API publishes digests for every file — side-repacks are always
+    hash-verified."""
     api = json.load(fetch(f"https://pypi.org/pypi/{pypi_name}/{version}/json", 60))
     wheels = [f for f in api["urls"] if f["filename"].endswith(".whl")]
     for f in wheels:
         if all(w in f["filename"] for w in want):
-            return f["url"]
+            return f["url"], f["digests"]["sha256"]
     for f in wheels:
         if "py3-none-any" in f["filename"]:
-            return f["url"]
+            return f["url"], f["digests"]["sha256"]
     sys.exit(f"no wheel for {pypi_name} {version} matching {want} on PyPI "
              f"(have: {[f['filename'] for f in wheels]})")
 
@@ -1027,9 +1348,10 @@ def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
     """
     fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))  # 12 or 13
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url = pypi_wheel_url(pypi_name, pin_version, [plat])
+    url, whl_sha = pypi_wheel_url(pypi_name, pin_version, [plat])
     wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel)
+    download(url, wheel, whl_sha)
+    lics = license_gate(wheel, "nvidia-nvshmem")
 
     stage = work / "nvshmem_stage"
     if stage.exists():
@@ -1074,21 +1396,33 @@ def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
                 sys.exit(f"nvshmem CORE lib {so.name} NEEDs unexpected {outside}; "
                          "add a conda mapping before shipping")
 
+    # license texts also ride the payload (redistribution condition)
+    licdir = stage / "share" / "licenses" / "nvidia-nvshmem"
+    licdir.mkdir(parents=True)
+    for flat, blob in sorted(lics.items()):
+        (licdir / flat).write_bytes(blob)
+
     hsh = hashlib.sha256(f"nvidia-nvshmem|{pin_version}|cuda{fam}".encode()).hexdigest()[:8]
     index = {
         "arch": PLATFORMS[subdir]["arch"], "platform": "linux", "subdir": subdir,
         "name": "nvidia-nvshmem", "version": pin_version,
         "build": f"cuda{fam}_repack_h{hsh}_{build_number}", "build_number": build_number,
-        "depends": ["__glibc >=2.28", f"cuda-version >={fam},<{fam + 1}",
-                    f"cuda-cudart >={fam},<{fam + 1}", "libgcc", "libstdcxx"],
-        "license": "LicenseRef-NVIDIA-SLA", "timestamp": int(time.time() * 1000),
+        "depends": [f"cuda-version >={fam},<{fam + 1}",
+                    f"cuda-cudart >={fam},<{fam + 1}"] + floor_deps([stage]),
+        # defensive mutex: the day conda-forge publishes an `nvshmem` at
+        # lib/libnvshmem_host.so.3, co-install becomes a loud UNSAT
+        # instead of a silent clobber
+        "constrains": ["nvshmem <0.0a0"],
+        "license": "LicenseRef-NVIDIA-Proprietary", "timestamp": int(time.time() * 1000),
     }
     about = {"home": "https://developer.nvidia.com/nvshmem",
+             "license": "LicenseRef-NVIDIA-Proprietary",
              "summary": "NVSHMEM runtime, repacked from the official PyPI wheel "
                         "(no conda-forge nvshmem exists)",
              "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
+                       "wheel_hash_source": "pypi-api",
                        "dropped_optional_plugins": dropped}}
-    out = emit_conda(stage, outdir, index, about, {})
+    out = emit_conda(stage, outdir, index, about, {}, licenses=lics)
     dep = f"nvidia-nvshmem >={pin_version},<{int(pin_version.split('.')[0]) + 1}"
     return dep, out
 
@@ -1100,17 +1434,19 @@ CUDNN_OK_NEEDED = re.compile(
 
 
 def build_nvidia_lib(pypi_name: str, pin: str, subdir: str,
-                     outdir: Path, work: Path) -> None:
-    """Repack an nvidia-* payload wheel (cudnn today) into $PREFIX/lib as
-    nvidia-<component>. Always build_number 0: the artifact is shared
-    across entries and immutable once published (emit_conda's
-    skip-published check reuses it)."""
+                     outdir: Path, work: Path, conda_name: str) -> None:
+    """Repack an nvidia-* payload wheel (cudnn today) into $PREFIX/lib
+    under `conda_name` (the conda-forge name — see NVIDIA_FALLBACK). The
+    artifact is shared across entries and immutable once published
+    (emit_conda's skip-published check reuses it); SIDE_BUILD bumps it
+    when the pipeline itself changes."""
     comp = re.sub(r"-cu\d+$", "", pypi_name)[len("nvidia-"):]
     fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url = pypi_wheel_url(pypi_name, pin, [plat])
+    url, whl_sha = pypi_wheel_url(pypi_name, pin, [plat])
     wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel)
+    download(url, wheel, whl_sha)
+    lics = license_gate(wheel, conda_name)
 
     stage = work / f"nvlib_{comp}"
     if stage.exists():
@@ -1143,21 +1479,28 @@ def build_nvidia_lib(pypi_name: str, pin: str, subdir: str,
             sys.exit(f"{comp} lib {so.name} NEEDs unexpected {outside}; "
                      "extend the whitelist and dependency set before shipping")
 
-    hsh = hashlib.sha256(f"nvidia-{comp}|{pin}|cuda{fam}".encode()).hexdigest()[:8]
+    licdir = stage / "share" / "licenses" / conda_name
+    licdir.mkdir(parents=True)
+    for flat, blob in sorted(lics.items()):
+        (licdir / flat).write_bytes(blob)
+
+    hsh = hashlib.sha256(f"{conda_name}|{pin}|cuda{fam}".encode()).hexdigest()[:8]
     index = {
         "arch": PLATFORMS[subdir]["arch"], "platform": "linux", "subdir": subdir,
-        "name": f"nvidia-{comp}", "version": pin,
-        "build": f"cuda{fam}_repack_h{hsh}_0", "build_number": 0,
-        "depends": ["__glibc >=2.28", f"cuda-version >={fam},<{fam + 1}",
+        "name": conda_name, "version": pin,
+        "build": f"cuda{fam}_repack_h{hsh}_{SIDE_BUILD}", "build_number": SIDE_BUILD,
+        "depends": [f"cuda-version >={fam},<{fam + 1}",
                     f"cuda-cudart >={fam},<{fam + 1}", "libcublas", "cuda-nvrtc",
-                    "libzlib", "libgcc", "libstdcxx"],
-        "license": "LicenseRef-NVIDIA-SLA", "timestamp": int(time.time() * 1000),
+                    "libzlib"] + floor_deps([stage]),
+        "license": "LicenseRef-NVIDIA-Proprietary", "timestamp": int(time.time() * 1000),
     }
     about = {"home": "https://developer.nvidia.com",
+             "license": "LicenseRef-NVIDIA-Proprietary",
              "summary": f"{comp}, repacked from the official PyPI wheel "
                         "(no conda-forge build fits the entry's cuda-version window)",
-             "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel)}}
-    emit_conda(stage, outdir, index, about, {})
+             "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
+                       "wheel_hash_source": "pypi-api"}}
+    emit_conda(stage, outdir, index, about, {}, licenses=lics)
 
 
 def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
@@ -1169,9 +1512,10 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     about.json; torch never shells out to them)."""
     cp = "cp" + py.replace(".", "")
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url = pypi_wheel_url(pypi_name, version, [f"-{cp}-", plat])
+    url, whl_sha = pypi_wheel_url(pypi_name, version, [f"-{cp}-", plat])
     wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel)
+    download(url, wheel, whl_sha)
+    lics = license_gate(wheel, pypi_name)
 
     stage = work / f"side_{pypi_name}"
     if stage.exists():
@@ -1189,21 +1533,23 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     if entry_points:
         log(f"{pypi_name}: console scripts NOT generated ({len(entry_points)} bytes of entry_points.txt)")
 
-    requires = parse_requires((di / "METADATA").read_text(errors="replace"), py, subdir)
+    metadata_text = (di / "METADATA").read_text(errors="replace")
+    requires = parse_requires(metadata_text, py, subdir)
+    sp_rel = f"lib/python{py}/site-packages"
     for top in sorted(p for p in sp.iterdir() if p.is_dir() and not p.name.endswith(".dist-info")):
-        compileall.compile_dir(top, quiet=2, workers=0,
+        compileall.compile_dir(top, quiet=2, workers=0, ddir=f"{sp_rel}/{top.name}",
                                invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
 
     has_elf = False
     for so in sorted(sp.rglob("*.so*")):
-        if not so.is_file():
+        if not so.is_file() or so.is_symlink():
             continue
         with open(so, "rb") as fh:
             if fh.read(4) != b"\x7fELF":
                 continue
         has_elf = True
         rel = os.path.relpath(stage / "lib", so.parent)
-        run("patchelf", "--force-rpath", "--add-rpath", f"$ORIGIN:$ORIGIN/{rel}", str(so))
+        patch_rpath(so, f"$ORIGIN:$ORIGIN/{rel}")
 
     deps = []
     for name, _, spec in requires:
@@ -1213,8 +1559,12 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     nxt = f"{py.split('.')[0]}.{int(py.split('.')[1]) + 1}"
     deps += [f"python >={py},<{nxt}.0a0", f"python_abi {py}.* *_cp{py.replace('.', '')}"]
     if has_elf:
-        deps += ["libgcc", "libstdcxx", "__glibc >=2.28", "libzlib"]
+        deps += floor_deps([sp]) + ["libzlib"]
 
+    lic = next((ln.split(":", 1)[1].strip() for ln in metadata_text.splitlines()
+                if ln.lower().startswith(("license-expression:", "license:"))
+                and 0 < len(ln.split(":", 1)[1].strip()) < 64),
+               "LicenseRef-Wheel-License")
     pytag = "py" + py.replace(".", "")
     hsh = hashlib.sha256(f"{pypi_name}|{version}|{py}".encode()).hexdigest()[:8]
     index = {
@@ -1222,13 +1572,16 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
         "subdir": subdir, "name": pypi_name, "version": version,
         "build": f"repack_{pytag}_h{hsh}_{build_number}", "build_number": build_number,
         "depends": sorted(set(deps)),
-        "license": "see-upstream", "timestamp": int(time.time() * 1000),
+        "license": lic, "timestamp": int(time.time() * 1000),
     }
-    about = {"summary": f"{pypi_name}, repacked from the official PyPI wheel "
+    about = {"license": lic,
+             "summary": f"{pypi_name}, repacked from the official PyPI wheel "
                         "(conda-forge has no build satisfying torch's pin)",
              "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
+                       "wheel_hash_source": "pypi-api",
                        "skipped_entry_points": entry_points}}
-    emit_conda(stage, outdir, index, about, {})
+    emit_conda(stage, outdir, index, about, {}, licenses=lics,
+               run_exports=None)
 
 
 # --------------------------------------------------------------------------
@@ -1274,6 +1627,9 @@ def collect_paths(stage: Path, prefix_files: dict[str, str]) -> tuple[list[dict]
 
 RELEASES = "https://github.com/Comfy-Forge/conda-torch/releases/download"
 SKIP_PUBLISHED = False  # set by --skip-published (CI): reuse published assets
+SIDE_BUILD = 0  # build number for SHARED side artifacts (nvshmem/cudnn/triton):
+                # one fixed value per wave so every cell converges on the same
+                # filename and skip-published dedups instead of forking copies
 
 
 def asset_published(subdir: str, filename: str) -> bool:
@@ -1290,7 +1646,9 @@ def asset_published(subdir: str, filename: str) -> bool:
 
 
 def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
-               prefix_files: dict[str, str]) -> Path | None:
+               prefix_files: dict[str, str],
+               licenses: dict[str, bytes] | None = None,
+               run_exports: dict | None = None) -> Path | None:
     name, version, build = index["name"], index["version"], index["build"]
     stem = f"{name}-{version}-{build}"
     if SKIP_PUBLISHED and asset_published(index["subdir"], f"{stem}.conda"):
@@ -1305,6 +1663,8 @@ def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
         download(f"{RELEASES}/{index['subdir']}/{stem}.conda", out)
         return out
 
+    about = dict(about)
+    about["extra"] = {**about.get("extra", {}), **provenance()}
     paths, files = collect_paths(stage, prefix_files)
 
     # very large payloads at zstd-19 can exhaust CI runner memory; drop to
@@ -1327,6 +1687,12 @@ def emit_conda(stage: Path, outdir: Path, index: dict, about: dict,
     w("paths.json", json.dumps({"paths": paths, "paths_version": 1}, indent=2))
     w("about.json", json.dumps(about, indent=2, sort_keys=True))
     w("files", "".join(f + "\n" for f in files))
+    if run_exports:
+        w("run_exports.json", json.dumps(run_exports, indent=2, sort_keys=True))
+    if licenses:
+        (infodir / "info" / "licenses").mkdir()
+        for flat, blob in sorted(licenses.items()):
+            (infodir / "info" / "licenses" / flat).write_bytes(blob)
     if prefix_files:
         w("has_prefix", "".join(
             f"{PLACEHOLDER} {mode} {rel}\n" for rel, mode in sorted(prefix_files.items())))
@@ -1385,6 +1751,9 @@ def main() -> None:
     ap.add_argument("--python", dest="py", required=True, help="e.g. 3.12")
     ap.add_argument("--subdir", default="linux-64", choices=sorted(PLATFORMS))
     ap.add_argument("--build-number", type=int, default=0)
+    ap.add_argument("--side-build-number", type=int, default=0,
+                    help="build number for shared side artifacts "
+                         "(nvshmem/cudnn/triton); fixed per wave")
     ap.add_argument("-o", "--outdir", type=Path, default=Path("dist"))
     ap.add_argument("--wheel", type=Path, default=None,
                     help="use a pre-downloaded wheel instead of fetching")
@@ -1398,6 +1767,8 @@ def main() -> None:
     if args.skip_published:
         global SKIP_PUBLISHED
         SKIP_PUBLISHED = True
+    global SIDE_BUILD
+    SIDE_BUILD = args.side_build_number
 
     if f"{sys.version_info.major}.{sys.version_info.minor}" != args.py:
         sys.exit(f"must run under python {args.py} for .pyc magic "
@@ -1411,10 +1782,23 @@ def main() -> None:
 
     wheel = args.wheel
     if wheel is None:
-        url = wheel_url(args.version, args.flavour, args.py, args.subdir)
+        url, idx_sha = wheel_url(args.version, args.flavour, args.py, args.subdir)
+        gsha = grid_wheel_sha(args.version, args.flavour, args.subdir, args.py)
+        if idx_sha and gsha and idx_sha != gsha:
+            sys.exit(f"index sha256 {idx_sha} != grid.json sha256 {gsha}: "
+                     "two sources disagree about this wheel — refusing")
+        expect = idx_sha or gsha
+        hash_source = ("index+grid" if idx_sha and gsha else
+                       "index" if idx_sha else "grid" if gsha else "TOFU")
+        if hash_source == "TOFU":
+            log("WARNING: no published sha256 for this wheel anywhere (no index "
+                "anchor, grid.json silent) — trust-on-first-use, recorded as such")
         wheel = args.work / PurePosixPath(url.split("#")[0]).name.replace("%2B", "+")
-        download(url, wheel)
+        download(url, wheel, expect)
+    else:
+        hash_source = "local-wheel"
     wheel_sha = sha256_file(wheel)
+    torch_licenses = license_gate(wheel, "pytorch/libtorch")
 
     # ---- extract full wheel into the pytorch stage -------------------------
     pt_stage = args.work / "pytorch_stage"
@@ -1437,7 +1821,7 @@ def main() -> None:
     dist_info = scrub_dist_info(sp)
     requires = parse_requires((dist_info / "METADATA").read_text(errors="replace"),
                               args.py, args.subdir)
-    byte_compile(sp)
+    byte_compile(sp, sp_rel)
 
     # ---- CUDA-ness guard: the flavour directory can serve tag-less wheels;
     # version.py is the wheel's own statement of what it is --------------------
@@ -1463,10 +1847,10 @@ def main() -> None:
             if not pin:
                 sys.exit(f"cannot derive nvshmem version from {nvshmem_req[1]!r}")
             log(f"repacking {nvshmem_req[0]} {pin} (hard DT_NEEDED, no conda-forge pkg)...")
-            # shared side artifact: always build_number 0 (immutable, reused
-            # across entries; entry-level bumps must not fork new copies)
+            # shared side artifact: SIDE_BUILD (immutable, reused across
+            # entries; entry-level bumps must not fork new copies)
             build_nvshmem(nvshmem_req[0], pin, args.subdir, args.py,
-                          args.outdir, args.work, 0)
+                          args.outdir, args.work, SIDE_BUILD)
         # side-repack python-wheel deps conda-forge cannot satisfy (e.g.
         # triton 3.0.0 / 3.8.x never got a conda-forge build)
         for name, _, spec in requires:
@@ -1477,9 +1861,9 @@ def main() -> None:
                 log(f"side-repacking {name} {floor}: conda-forge cannot satisfy "
                     f"{spec!r} on {args.subdir}")
                 side_repack_pywheel(name, floor, args.py, args.subdir,
-                                    args.outdir, args.work, 0)
+                                    args.outdir, args.work, SIDE_BUILD)
     else:
-        prefix_files = split_win64(sp, pt_stage, lt_stage)
+        prefix_files, win_imports, win_stripped = split_win64(sp, pt_stage, lt_stage)
 
     # ---- entry point (POSIX; win handled inside split_win64) ---------------
     if is_linux:
@@ -1502,10 +1886,11 @@ def main() -> None:
             "intel-openmp", "ucrt >=10.0.20348.0", "vc >=14.2,<15",
             "vc14_runtime >=14.44",
         ]
+        # every stripped-but-imported DLL basename must provably ship
+        # inside the pinned windows (cupti's is minor-versioned)
+        lt_deps = win_basename_audit(win_imports, win_stripped, lt_deps, flavour)
     else:
-        lt_deps = cuda_deps(requires, flavour) + [
-            "libgomp", "libgcc >=12", "libstdcxx >=12", "__glibc >=2.28",
-        ]
+        lt_deps = cuda_deps(requires, flavour) + ["libgomp"] + floor_deps([lt_stage])
         if args.subdir == "linux-aarch64":
             lt_deps.append("libzlib")  # vendored gfortran/cudnn_graph NEED libz.so.1
     # a version satisfying the bound is not enough — a conda-forge BUILD
@@ -1532,12 +1917,18 @@ def main() -> None:
         f"python_abi {py}.* *_cp{py.replace('.', '')}",
         f"libtorch {args.version} {lt_build}",
     ]
+    if is_linux:
+        pt_deps += floor_deps([pt_stage])
+    # NOTE: no pytorch-cpu/pytorch-gpu constrains. The old
+    # `pytorch-gpu <0.0a0` silently made every env using conda-forge's
+    # common pytorch-gpu metapackage idiom resolve to mirrors only, never
+    # repacks; the mutex intent is already served by the package NAME and
+    # the exact libtorch build pin.
     pt_index = {
         "arch": plat["arch"], "platform": plat["platform"], "subdir": args.subdir,
         "name": "pytorch", "version": args.version,
         "build": pt_build, "build_number": args.build_number,
         "depends": sorted(set(pt_deps)),
-        "constrains": ["pytorch-cpu <0.0a0", "pytorch-gpu <0.0a0"],
         "license": "BSD-3-Clause", "license_family": "BSD",
         "timestamp": now,
     }
@@ -1546,11 +1937,25 @@ def main() -> None:
         "license": "BSD-3-Clause",
         "summary": "PyTorch, repacked byte-for-byte from the official PyPI wheel",
         "description": f"Repacked from {wheel_name}. See github.com/Comfy-Forge/conda-torch.",
-        "extra": {"repacked_from": wheel_name, "wheel_sha256": wheel_sha},
+        "extra": {"repacked_from": wheel_name, "wheel_sha256": wheel_sha,
+                  "wheel_hash_source": hash_source},
     }
 
-    emit_conda(lt_stage, args.outdir, lt_index, about, {})
-    emit_conda(pt_stage, args.outdir, pt_index, about, prefix_files)
+    # licenses ride the libtorch payload too (its stage has no dist-info)
+    lt_licdir = lt_stage / "share" / "licenses" / "libtorch"
+    lt_licdir.mkdir(parents=True, exist_ok=True)
+    for flat, blob in sorted(torch_licenses.items()):
+        (lt_licdir / flat).write_bytes(blob)
+
+    mm = args.version.split(".")
+    nxt_minor = f"{mm[0]}.{int(mm[1]) + 1}"
+    lt_rex = {"weak": [f"libtorch >={args.version},<{nxt_minor}.0a0"]}
+    pt_rex = {"weak": [f"pytorch >={args.version},<{nxt_minor}.0a0",
+                       f"libtorch >={args.version},<{nxt_minor}.0a0"]}
+    emit_conda(lt_stage, args.outdir, lt_index, about, {},
+               licenses=torch_licenses, run_exports=lt_rex)
+    emit_conda(pt_stage, args.outdir, pt_index, about, prefix_files,
+               licenses=torch_licenses, run_exports=pt_rex)
     log("done")
 
 

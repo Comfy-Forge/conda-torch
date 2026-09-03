@@ -18,10 +18,15 @@ on:
       build_number:
         description: "build number (bump to republish an entry with fixed metadata)"
         default: "0"
+      side_build_number:
+        description: "build number for shared side artifacts (nvshmem/cudnn/triton)"
+        default: "0"
 
 permissions:
   contents: write
   actions: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: repack-${{ inputs.version }}-${{ inputs.flavour }}-${{ inputs.python }}-${{ inputs.platform }}
@@ -50,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q patchelf zstd
-          pip install zstandard distlib
+          pip install zstandard pefile "setuptools>=80"
 
       - name: Repack
         run: |
@@ -60,9 +65,24 @@ jobs:
             --python "${{ inputs.python }}" \
             --subdir "${{ inputs.platform }}" \
             --build-number "${{ inputs.build_number }}" \
+            --side-build-number "${{ inputs.side_build_number }}" \
             -o dist --work work --delete-wheel --skip-published
           rm -rf work
           ls -la dist/
+
+      - name: Structural verification (RPATH lint, licenses, run_exports, .pyc)
+        run: |
+          shopt -s nullglob
+          files=(dist/*.conda)
+          [ ${#files[@]} -eq 0 ] || python3 tools/verify_repack.py "${files[@]}"
+
+      - name: Attest build provenance
+        # signed SLSA provenance for every artifact; continue-on-error so an
+        # org-level feature gap can never block a publish
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.conda"
 
       - name: Upload to release (immutable — never overwrite an asset)
         run: |

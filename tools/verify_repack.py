@@ -54,9 +54,15 @@ def verify(conda_path: Path) -> None:
     with zstd_tar(z.read(info[0])) as tf:
         index = json.load(tf.extractfile("info/index.json"))
         paths = json.load(tf.extractfile("info/paths.json"))
+        infonames = tf.getnames()
     name, subdir = index["name"], index["subdir"]
     check("+" not in index["version"], "no '+' in version (conda ordering trap)")
     check("build_number" in index, "build_number present")
+    if "repack" in index.get("build", ""):
+        check(any(n.startswith("info/licenses/") for n in infonames),
+              "info/licenses/ present (license gate)")
+        if name in ("libtorch", "pytorch"):
+            check("info/run_exports.json" in infonames, "run_exports.json present")
     pset = {p["_path"] for p in paths["paths"]}
 
     with zstd_tar(z.read(pkg[0])) as tf:
@@ -87,11 +93,26 @@ def verify(conda_path: Path) -> None:
                       "libtorch_python.so at $PREFIX/lib")
             else:
                 check("Scripts/torchrun.exe" in members, "Scripts/torchrun.exe present")
+                check("Scripts/torchrun-script.py" in members,
+                      "torchrun-script.py sibling present (launcher pair)")
+                script = tf.extractfile(members["Scripts/torchrun-script.py"]).read()
+                check(script.startswith(b"#!") and b"_placehold" in script[:300],
+                      "script shebang carries the prefix placeholder")
+                reg = next((p for p in paths["paths"]
+                            if p["_path"] == "Scripts/torchrun-script.py"), {})
+                check(reg.get("file_mode") == "text" and "prefix_placeholder" in reg,
+                      "torchrun-script.py registered for text prefix rewrite")
                 exe = tf.extractfile(members["Scripts/torchrun.exe"]).read()
-                check(b"__main__.py" in exe[-4096:], "launcher has embedded __main__.py")
+                check(b"__main__.py" not in exe[-4096:],
+                      "launcher is the plain stub (no dead appended archive)")
                 check("Lib/site-packages/torch/lib/torch_python.dll" in members,
                       "torch_python.dll stays in pytorch")
-            check(any(n.endswith(".pyc") for n in members), ".pyc shipped")
+            pycs = [n for n in members if n.endswith(".pyc")]
+            check(bool(pycs), ".pyc shipped")
+            if pycs:
+                blob = tf.extractfile(members[pycs[0]]).read()
+                check(b"pytorch_stage" not in blob and b"work/" not in blob[:2000],
+                      ".pyc co_filename is env-relative (no staging path)")
 
         if name == "libtorch" and subdir == "win-64":
             bad_dll = [n for n in members if n.lower().endswith(".dll")
@@ -105,26 +126,45 @@ def verify(conda_path: Path) -> None:
             for want in ("torch_cuda.dll", "torch_cpu.dll", "c10.lib", "torch_cuda.lib"):
                 check(any(n.endswith(want) for n in members), f"{want} kept")
 
-        if name in ("libtorch", "pytorch", "nvidia-nvshmem") and subdir.startswith("linux"):
-            elfs = [n for n in members
-                    if members[n].isfile() and (n.endswith(".so") or ".so." in n)
-                    and tf.extractfile(members[n]).read(4) == b"\x7fELF"]
-            gomp = [n for n in elfs if "libgomp" in n]
-            check(not gomp, f"no vendored libgomp {gomp[:2]}")
-            for n in elfs[:6] if name == "nvidia-nvshmem" else \
-                    [e for e in elfs if e.rsplit("/", 1)[-1] in
-                     ("libtorch_cuda.so", "libtorch_cpu.so", "libtorch_python.so",
-                      "libtorch_nvshmem.so", "libc10_cuda.so")]:
-                blob = tf.extractfile(members[n]).read()
+        if subdir.startswith("linux"):
+            # RPATH LINT, every ELF in the payload: DT_RPATH (not RUNPATH),
+            # and every entry $ORIGIN-relative and non-empty. Absolute
+            # entries shadow the prefix on Jetson/SBSA (/usr/local/cuda);
+            # an EMPTY entry ('::') means load-from-CWD; leftover wheel
+            # nvidia/* entries resurrect under pip-installed wheels.
+            import shutil as _sh
+            import re as _re
+            n_elf = 0
+            bad: list[str] = []
+            for n, m in members.items():
+                if not m.isfile():
+                    continue
+                src = tf.extractfile(m)
+                head = src.read(4)
+                if head != b"\x7fELF":
+                    continue
+                n_elf += 1
                 tmp = Path("/tmp/_verify_elf")
-                tmp.write_bytes(blob)
-                dyn = subprocess.run(["readelf", "-d", str(tmp)], capture_output=True,
-                                     text=True).stdout
-                check(dyn != "", f"readelf parsed {n}")
-                check("(RPATH)" in dyn and "(RUNPATH)" not in dyn,
-                      f"{n.rsplit('/', 1)[-1]}: DT_RPATH not RUNPATH")
-                if name != "nvidia-nvshmem":
-                    check("$ORIGIN" in dyn, f"{n.rsplit('/', 1)[-1]}: $ORIGIN rpath present")
+                with open(tmp, "wb") as dst:
+                    dst.write(head)
+                    _sh.copyfileobj(src, dst, 1 << 20)
+                dyn = subprocess.run(["readelf", "-d", str(tmp)],
+                                     capture_output=True, text=True).stdout
+                base = n.rsplit("/", 1)[-1]
+                if "libgomp" in base:
+                    bad.append(f"{base}: vendored libgomp")
+                    continue
+                if "(RUNPATH)" in dyn:
+                    bad.append(f"{base}: RUNPATH (loses to LD_LIBRARY_PATH)")
+                rp = _re.search(r"\((?:RPATH|RUNPATH)\)\s+Library r?u?n?path: \[([^\]]*)\]", dyn)
+                if rp:
+                    for entry in rp.group(1).split(":"):
+                        if not entry or not entry.startswith("$ORIGIN"):
+                            bad.append(f"{base}: rpath entry {entry!r}")
+            check(n_elf > 0 or name not in ("libtorch", "pytorch"),
+                  f"found {n_elf} ELFs to lint")
+            check(not bad, f"RPATH lint clean over {n_elf} ELFs "
+                  + ("" if not bad else f"— violations: {bad[:5]}"))
 
     print(f"--- {conda_path.name}: {'PASS' if FAILS == before else 'FAILURES ABOVE'}")
 

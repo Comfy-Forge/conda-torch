@@ -25,7 +25,8 @@ import zipfile
 from pathlib import Path
 
 
-def read_index_json(conda_path: Path) -> dict:
+def read_index_json(conda_path: Path) -> tuple[dict, dict]:
+    """(index.json, about.json-or-{}) from the artifact."""
     with zipfile.ZipFile(conda_path) as zf:
         info_names = [n for n in zf.namelist() if n.startswith("info-") and n.endswith(".tar.zst")]
         if len(info_names) != 1:
@@ -36,7 +37,31 @@ def read_index_json(conda_path: Path) -> dict:
         member = tf.extractfile("info/index.json")
         if member is None:
             sys.exit(f"{conda_path.name}: info/index.json missing")
-        return json.load(member)
+        index = json.load(member)
+        about = {}
+        try:
+            am = tf.extractfile("info/about.json")
+            if am is not None:
+                about = json.load(am)
+        except KeyError:
+            pass
+        return index, about
+
+
+# repacked package name -> PyPI purl base. Makes repacks visible to the
+# PyPI half of the solver (uv/pixi conda→pypi mapping is keyed on
+# conda-forge artifact hashes; hash-stranger repacks provide NOTHING
+# without this, and pixi locks a second CPU torch from pypi.org over ours
+# — proven). Mirrored fragments stay verbatim: cf hashes are already
+# mapped.
+PURL_BASE = {
+    "pytorch": "pkg:pypi/torch",
+    "triton": "pkg:pypi/triton",
+    "libcudnn": "pkg:pypi/nvidia-cudnn-cu12",
+    "nvidia-cudnn": "pkg:pypi/nvidia-cudnn-cu12",
+    "nvidia-nvshmem": "pkg:pypi/nvidia-nvshmem-cu12",
+    "cuda-bindings": "pkg:pypi/cuda-bindings",
+}
 
 
 def hashes(path: Path) -> tuple[str, str, int]:
@@ -57,7 +82,7 @@ def main() -> None:
     ap.add_argument("--meta-dir", type=Path, default=Path("meta"))
     args = ap.parse_args()
 
-    index = read_index_json(args.conda_file)
+    index, about = read_index_json(args.conda_file)
     if index.get("subdir", args.subdir) != args.subdir:
         sys.exit(f"index.json says subdir={index['subdir']!r} but you passed {args.subdir!r}")
     if "+" in str(index.get("version", "")):
@@ -67,6 +92,13 @@ def main() -> None:
     sha256, md5, size = hashes(args.conda_file)
     entry = dict(index)
     entry.update({"sha256": sha256, "md5": md5, "size": size, "subdir": args.subdir})
+    if "repack" in str(index.get("build", "")) and index.get("name") in PURL_BASE:
+        entry["purls"] = [f"{PURL_BASE[index['name']]}@{index['version']}"]
+    prov = {k: v for k, v in (about.get("extra") or {}).items()
+            if k in ("run_id", "run_url", "source_commit", "wheel_sha256",
+                     "wheel_hash_source")}
+    if prov:
+        entry["provenance"] = prov
 
     out = args.meta_dir / args.subdir / f"{args.conda_file.name}.json"
     if out.exists():
