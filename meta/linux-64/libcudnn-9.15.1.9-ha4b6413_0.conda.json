@@ -1,0 +1,25 @@
+{
+ "build": "ha4b6413_0",
+ "build_number": 0,
+ "constrains": [
+  "libcudnn-jit <0a"
+ ],
+ "depends": [
+  "__glibc >=2.28,<3.0.a0",
+  "cuda-nvrtc",
+  "cuda-version >=13,<14.0a0",
+  "libcublas",
+  "libgcc >=14",
+  "libstdcxx >=14",
+  "libzlib >=1.3.1,<2.0a0"
+ ],
+ "license": "LicenseRef-cuDNN-Software-License-Agreement",
+ "md5": "01a33685cb06174f180f797e7dc8c83f",
+ "mirrored_from": "conda-forge",
+ "name": "libcudnn",
+ "sha256": "42dec00ffff56749da2f08b3620a34950d020a0ed23d73c9f556bfdb36a51384",
+ "size": 318510742,
+ "subdir": "linux-64",
+ "timestamp": 1763059421613,
+ "version": "9.15.1.9"
+}
