@@ -1,0 +1,34 @@
+{
+ "arch": "aarch64",
+ "build": "cuda12_repack_h42b93091_1",
+ "build_number": 1,
+ "constrains": [
+  "nvshmem <0.0a0"
+ ],
+ "depends": [
+  "cuda-version >=12,<13",
+  "cuda-cudart >=12,<13",
+  "__glibc >=2.17",
+  "libstdcxx >=5",
+  "libgcc"
+ ],
+ "license": "LicenseRef-NVIDIA-Proprietary",
+ "md5": "11a65d53ac54d84f4a4db4bb28a701fe",
+ "name": "nvidia-nvshmem",
+ "platform": "linux",
+ "provenance": {
+  "run_id": "33781562899",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/33781562899",
+  "source_commit": "5bb1a5ec6bf9c0c68e27cd8587ed2bc860a59cff",
+  "wheel_hash_source": "pypi-api",
+  "wheel_sha256": "0b48363fc6964dede448029434c6abed6c5e37f823cb43c3bcde7ecfc0457e15"
+ },
+ "purls": [
+  "pkg:pypi/nvidia-nvshmem-cu12@3.4.5"
+ ],
+ "sha256": "46d61049670c77b0b91566f5728210ab6544b1c8d8d8ffc519cfe2d4ca197358",
+ "size": 43347439,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788454618270,
+ "version": "3.4.5"
+}
