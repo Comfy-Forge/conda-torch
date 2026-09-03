@@ -1,0 +1,49 @@
+{
+ "arch": "aarch64",
+ "build": "cuda126_repack_h48f52bcf_1",
+ "build_number": 1,
+ "constrains": [
+  "pytorch 2.10.0 cuda126_repack_*"
+ ],
+ "depends": [
+  "__cuda",
+  "__glibc >=2.28",
+  "cuda-cudart >=12.6.77,<13.0a0",
+  "cuda-cupti >=12.6.80,<13.0a0",
+  "cuda-nvrtc >=12.6.77,<13.0a0",
+  "cuda-nvtx >=12.6.77,<13.0a0",
+  "cuda-version >=12.6,<13",
+  "cusparselt >=0.7.1,<1.0a0",
+  "libcublas >=12.6.4.1,<13.0a0",
+  "libcudnn >=9.10.2.21,<10.0a0",
+  "libcufft >=11.3.0.4,<12.0a0",
+  "libcufile >=1.11.1.6,<2.0a0",
+  "libcurand >=10.3.7.77,<11.0a0",
+  "libcusolver >=11.7.1.2,<12.0a0",
+  "libcusparse >=12.5.4.2,<13.0a0",
+  "libgcc",
+  "libgomp",
+  "libnvjitlink >=12.6.85,<13.0a0",
+  "libstdcxx >=6",
+  "libzlib",
+  "nccl >=2.27.5,<3.0a0",
+  "nvidia-nvshmem >=3.4.5,<4.0a0"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "a466eefc04b478dbc624e8fba1792ba2",
+ "name": "libtorch",
+ "platform": "linux",
+ "provenance": {
+  "run_id": "33781497369",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/33781497369",
+  "source_commit": "5a37acb2e155fb88a11bf38793cac9c9d64db157",
+  "wheel_hash_source": "index+grid",
+  "wheel_sha256": "dae63a4756c9c455f299309b7b093f1b7c3460e63b53769cab10543b51a1d827"
+ },
+ "sha256": "e65f01568e407cf643ec613203beb85d7a2421d85e51ca5835784cd80693fdf5",
+ "size": 178048603,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788454647755,
+ "version": "2.10.0"
+}
