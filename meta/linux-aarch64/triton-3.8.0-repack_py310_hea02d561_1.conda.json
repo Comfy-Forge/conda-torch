@@ -1,0 +1,32 @@
+{
+ "arch": "aarch64",
+ "build": "repack_py310_hea02d561_1",
+ "build_number": 1,
+ "depends": [
+  "__glibc >=2.27",
+  "libgcc",
+  "libstdcxx >=6",
+  "libzlib",
+  "python >=3.10,<3.11.0a0",
+  "python_abi 3.10.* *_cp310"
+ ],
+ "license": "MIT",
+ "md5": "94fa190475fd02bf688933619be06956",
+ "name": "triton",
+ "platform": "linux",
+ "provenance": {
+  "run_id": "33796318427",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/33796318427",
+  "source_commit": "55eac4e38d76d4addb4821c9600393d8b6fb9480",
+  "wheel_hash_source": "pypi-api",
+  "wheel_sha256": "398f4b009c7ab08ed9aeb1d1282dee822945b53f399a5e12a4fecb643cf2007d"
+ },
+ "purls": [
+  "pkg:pypi/triton@3.8.0"
+ ],
+ "sha256": "6d21e86625ae1fdb36375db98017374817ebf77c84118bf4d183be93a6c2f768",
+ "size": 146526190,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788463577930,
+ "version": "3.8.0"
+}
