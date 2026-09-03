@@ -92,6 +92,7 @@ jobs:
             || true
           existing=$(gh release view "${{ inputs.platform }}" --json assets -q '.assets[].name')
           for f in dist/*.conda; do
+            [ -e "$f" ] || continue  # empty dist: a sibling run published everything
             b=$(basename "$f")
             if echo "$existing" | grep -qxF "$b"; then
               if [ -f "meta/${{ inputs.platform }}/$b.json" ]; then
