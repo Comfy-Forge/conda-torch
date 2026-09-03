@@ -984,7 +984,8 @@ def byte_compile(sp: Path, sp_rel: str) -> None:
     log("byte-compiling (env-relative co_filename)...")
     for top in ("torch", "torchgen", "functorch"):
         if (sp / top).is_dir():
-            compileall.compile_dir(sp / top, quiet=2, workers=0,
+            # str(), not Path: 3.9-3.11 compileall calls stripdir.split()
+            compileall.compile_dir(str(sp / top), quiet=2, workers=0,
                                    ddir=f"{sp_rel}/{top}",
                                    invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
     pyc_check(sp, sp_rel)
@@ -1537,7 +1538,7 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     requires = parse_requires(metadata_text, py, subdir)
     sp_rel = f"lib/python{py}/site-packages"
     for top in sorted(p for p in sp.iterdir() if p.is_dir() and not p.name.endswith(".dist-info")):
-        compileall.compile_dir(top, quiet=2, workers=0, ddir=f"{sp_rel}/{top.name}",
+        compileall.compile_dir(str(top), quiet=2, workers=0, ddir=f"{sp_rel}/{top.name}",
                                invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
 
     has_elf = False
