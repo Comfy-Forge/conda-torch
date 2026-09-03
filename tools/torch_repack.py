@@ -1049,21 +1049,28 @@ def pe_imports(path: Path) -> set[str]:
 def cf_dll_basenames(pkg: str, subdir: str, version: str) -> set[str]:
     """Library/bin DLL basenames shipped by the newest conda-forge build of
     pkg==version on subdir (paths.json range-read from the artifact)."""
-    cands = [f for f in cf_files(pkg)
-             if f.get("attrs", {}).get("subdir") == subdir
-             and f["version"] == version and f["basename"].endswith(".conda")]
-    if not cands:
-        return set()
-    best = max(cands, key=lambda f: f.get("attrs", {}).get("build_number", 0))
-    url = "https://conda.anaconda.org/conda-forge/" + best["basename"]
-    zf = zipfile.ZipFile(io.BufferedReader(RangeFile(url), 256 * 1024))
-    info = next(n for n in zf.namelist() if n.startswith("info-"))
-    raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(zf.read(info))).read()
-    with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
-        paths = json.load(tf.extractfile("info/paths.json"))
-    return {PurePosixPath(p["_path"]).name.lower() for p in paths["paths"]
-            if p["_path"].lower().startswith("library/bin/")
-            and p["_path"].lower().endswith(".dll")}
+    cands = sorted((f for f in cf_files(pkg)
+                    if f.get("attrs", {}).get("subdir") == subdir
+                    and f["version"] == version and f["basename"].endswith(".conda")),
+                   key=lambda f: f.get("attrs", {}).get("build_number", 0),
+                   reverse=True)
+    for cand in cands:
+        # the files API lists builds that were patched OUT of repodata and
+        # can 404 on the CDN — skip ghosts, try the next build
+        url = "https://conda.anaconda.org/conda-forge/" + cand["basename"]
+        try:
+            zf = zipfile.ZipFile(io.BufferedReader(RangeFile(url), 256 * 1024))
+            info = next(n for n in zf.namelist() if n.startswith("info-"))
+            raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(zf.read(info))).read()
+        except (urllib.error.HTTPError, urllib.error.URLError, StopIteration) as e:
+            log(f"cf_dll_basenames: skipping ghost {cand['basename']} ({e})")
+            continue
+        with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
+            paths = json.load(tf.extractfile("info/paths.json"))
+        return {PurePosixPath(p["_path"]).name.lower() for p in paths["paths"]
+                if p["_path"].lower().startswith("library/bin/")
+                and p["_path"].lower().endswith(".dll")}
+    return set()
 
 
 def win_basename_audit(imports: set[str], stripped: list[str],
@@ -1542,7 +1549,10 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
                                invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
 
     has_elf = False
-    for so in sorted(sp.rglob("*.so*")):
+    # ALL ELF files, not *.so* — triton vendors ELF EXECUTABLES too
+    # (ptxas, cuobjdump, FileCheck) whose upstream RUNPATH carries
+    # build-machine paths and empty entries (load-from-CWD)
+    for so in sorted(sp.rglob("*")):
         if not so.is_file() or so.is_symlink():
             continue
         with open(so, "rb") as fh:
