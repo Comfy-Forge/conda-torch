@@ -1,0 +1,32 @@
+{
+ "arch": "aarch64",
+ "build": "cuda12_repack_h25cb2784_1",
+ "build_number": 1,
+ "depends": [
+  "cuda-version >=12,<13",
+  "cuda-cudart >=12,<13",
+  "libcublas",
+  "cuda-nvrtc",
+  "libzlib",
+  "__glibc >=2.27"
+ ],
+ "license": "LicenseRef-NVIDIA-Proprietary",
+ "md5": "2655869855cde4390a57b410a825ebc2",
+ "name": "libcudnn",
+ "platform": "linux",
+ "provenance": {
+  "run_id": "33781597003",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/33781597003",
+  "source_commit": "5bb1a5ec6bf9c0c68e27cd8587ed2bc860a59cff",
+  "wheel_hash_source": "pypi-api",
+  "wheel_sha256": "08caaf27fe556aca82a3ee3b5aa49a77e7de0cfcb7ff4e5c29da426387a8267e"
+ },
+ "purls": [
+  "pkg:pypi/nvidia-cudnn-cu12@9.19.0.56"
+ ],
+ "sha256": "b85f955e03f2812e54723ec584cea871be740c445b344e5f6a09aa837cbda5cf",
+ "size": 458206297,
+ "subdir": "linux-aarch64",
+ "timestamp": 1788454977285,
+ "version": "9.19.0.56"
+}
