@@ -1518,6 +1518,23 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     3.0.0 and 3.8.x have no conda-forge build at all. Same dist-info
     contract as pytorch. Console scripts are NOT generated (recorded in
     about.json; torch never shells out to them)."""
+    pytag = "py" + py.replace(".", "")
+    hsh = hashlib.sha256(f"{pypi_name}|{version}|{py}".encode()).hexdigest()[:8]
+    stem = f"{pypi_name}-{version}-repack_{pytag}_h{hsh}_{build_number}"
+    if SKIP_PUBLISHED and asset_published(subdir, f"{stem}.conda"):
+        # deterministic filename: a sibling run (or an earlier wave) already
+        # built and published this exact side artifact. Skip before ever
+        # touching the network/license gate — never re-download the wheel
+        # just to discover we'd throw the result away (this is what made
+        # already-published triton 3.0.0 side-repacks fail the license
+        # gate on a later PyPI reupload: work we didn't need to redo).
+        if (Path("meta") / subdir / f"{stem}.conda.json").exists():
+            log(f"SKIP {stem}: already published with fragment")
+            return
+        log(f"{stem}: published but fragment missing; fetching published bytes")
+        download(f"{RELEASES}/{subdir}/{stem}.conda", outdir / f"{stem}.conda")
+        return
+
     cp = "cp" + py.replace(".", "")
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
     url, whl_sha = pypi_wheel_url(pypi_name, version, [f"-{cp}-", plat])
