@@ -55,7 +55,11 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q patchelf zstd
-          pip install zstandard pefile "setuptools>=80"
+          # no version pin: setuptools 80+ dropped python 3.8, and the win
+          # launcher extraction (torch_repack.py) falls back to downloading
+          # setuptools 80.9.0's wheel directly when the local install lacks
+          # cli-64.exe, so any locally installed setuptools is sufficient here
+          pip install zstandard pefile setuptools
 
       - name: Repack
         run: |
