@@ -1,0 +1,14 @@
+{
+  "libtorch-2.13.0-cuda129_repack_hf3fb3d0b_1.conda": {
+    "constrains": ["pytorch 2.13.0 cuda129_repack_*", "libcudnn <0.0a0"]
+  },
+  "libtorch-2.11.0-cuda129_repack_h6b618728_0.conda": {
+    "constrains": ["pytorch 2.11.0 cuda129_repack_*", "libcudnn <0.0a0"]
+  },
+  "libtorch-2.11.0-cuda128_repack_hea68ca06_1.conda": {
+    "constrains": ["pytorch 2.11.0 cuda128_repack_*", "libcudnn <0.0a0"]
+  },
+  "libtorch-2.12.1-cuda129_repack_hfbbeb713_0.conda": {
+    "constrains": ["pytorch 2.12.1 cuda129_repack_*", "libcudnn <0.0a0"]
+  }
+}
