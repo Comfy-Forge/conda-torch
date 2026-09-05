@@ -114,6 +114,33 @@ def verify(conda_path: Path) -> None:
                 check(b"pytorch_stage" not in blob and b"work/" not in blob[:2000],
                       ".pyc co_filename is env-relative (no staging path)")
 
+        if name == "libtorch" and "repack" in index.get("build", ""):
+            # conda-forge parity: the activation pair must ship and its
+            # CF_TORCH_CUDA_ARCH_LIST must equal the gencode set baked into
+            # this very artifact's ATen/cuda/CUDAConfig.h (self-contained).
+            import re as _re2
+            ext = "bat" if subdir == "win-64" else "sh"
+            act = f"etc/conda/activate.d/libtorch_activate.{ext}"
+            deact = f"etc/conda/deactivate.d/libtorch_deactivate.{ext}"
+            check(act in members and deact in members,
+                  f"activation pair present ({act}, {deact})")
+            check(act in pset and deact in pset, "activation pair listed in paths.json")
+            hdr = next((n for n in members if n.endswith("ATen/cuda/CUDAConfig.h")), None)
+            check(hdr is not None, "ATen/cuda/CUDAConfig.h in payload")
+            if act in members and hdr is not None:
+                script = tf.extractfile(members[act]).read().decode(errors="replace")
+                got = _re2.search(r'CF_TORCH_CUDA_ARCH_LIST=\"?([^\"\r\n]*)', script)
+                got = got.group(1) if got else ""
+                flags = _re2.search(r'NVCC_FLAGS_EXTRA\s+"([^"]*)"',
+                                    tf.extractfile(members[hdr]).read().decode(errors="replace"))
+                sm, ptx = set(), set()
+                for kind, n_ in _re2.findall(r"code=(sm|compute)_(\d+)", flags.group(1) if flags else ""):
+                    (sm if kind == "sm" else ptx).add(int(n_))
+                want = ";".join(f"{n_ // 10}.{n_ % 10}" + ("+PTX" if n_ in ptx else "")
+                                for n_ in sorted(sm | ptx))
+                check(bool(got), "CF_TORCH_CUDA_ARCH_LIST non-empty")
+                check(got == want, f"CF_TORCH_CUDA_ARCH_LIST matches CUDAConfig.h ({got!r} vs {want!r})")
+
         if name == "libtorch" and subdir == "win-64":
             bad_dll = [n for n in members if n.lower().endswith(".dll")
                        and n.rsplit("/", 1)[-1].lower().startswith(

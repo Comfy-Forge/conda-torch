@@ -319,13 +319,163 @@ def wheel_license_files(wheel: Path) -> dict[str, bytes]:
     return out
 
 
+# Well-known permissive licenses whose canonical text we can supply when an
+# upstream wheel declares the license in METADATA but forgot to ship the
+# file (PyPI's current triton 3.0.0 re-upload is exactly that). The gate
+# exists for NVIDIA-class CONDITIONAL redistribution terms; refusing to
+# ship MIT software because upstream omitted a boilerplate file would be
+# the gate misfiring. Anything proprietary, LicenseRef-*, unknown, or not
+# on this list still hard-fails exactly as before.
+_PERMISSIVE_SPDX = {"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC"}
+_LICENSE_ALIASES = {  # METADATA spellings -> SPDX
+    "mit": "MIT", "mit license": "MIT",
+    "bsd": "BSD-3-Clause", "bsd license": "BSD-3-Clause", "bsd-3": "BSD-3-Clause",
+    "bsd-3-clause": "BSD-3-Clause", "new bsd": "BSD-3-Clause", "modified bsd": "BSD-3-Clause",
+    "bsd-2-clause": "BSD-2-Clause", "simplified bsd": "BSD-2-Clause", "bsd-2": "BSD-2-Clause",
+    "apache": "Apache-2.0", "apache 2.0": "Apache-2.0", "apache-2.0": "Apache-2.0",
+    "apache software license": "Apache-2.0", "apache license 2.0": "Apache-2.0",
+    "apache license, version 2.0": "Apache-2.0", "isc": "ISC", "isc license": "ISC",
+    "isc license (iscl)": "ISC",
+}
+_LICENSE_DIR = Path(__file__).resolve().parent / "licenses"
+
+
+def wheel_metadata_text(wheel: Path) -> str:
+    with zipfile.ZipFile(wheel) as zf:
+        name = next((n for n in zf.namelist() if n.endswith(".dist-info/METADATA")), None)
+        return zf.read(name).decode("utf-8", errors="replace") if name else ""
+
+
+def declared_license(metadata_text: str) -> str | None:
+    """SPDX id declared by METADATA (License-Expression, License, or the
+    OSI classifier), or None when nothing usable is declared."""
+    for ln in metadata_text.splitlines():
+        low = ln.lower()
+        if low.startswith("license-expression:"):
+            v = ln.split(":", 1)[1].strip()
+            return _LICENSE_ALIASES.get(v.lower(), v)
+    for ln in metadata_text.splitlines():
+        low = ln.lower()
+        if low.startswith("license:"):
+            v = ln.split(":", 1)[1].strip()
+            if 0 < len(v) < 64:
+                return _LICENSE_ALIASES.get(v.lower(), v)
+    for ln in metadata_text.splitlines():
+        if ln.lower().startswith("classifier: license ::"):
+            leaf = ln.rsplit("::", 1)[1].strip()
+            hit = _LICENSE_ALIASES.get(leaf.lower())
+            if hit:
+                return hit
+    return None
+
+
 def license_gate(wheel: Path, pkg_name: str) -> dict[str, bytes]:
     lics = wheel_license_files(wheel)
-    if not lics:
-        sys.exit(f"{wheel.name}: NO license files found in the source wheel — "
-                 f"refusing to publish {pkg_name} without knowing why")
-    log(f"{pkg_name}: carrying {len(lics)} license file(s): {sorted(lics)[:4]}...")
-    return lics
+    if lics:
+        log(f"{pkg_name}: carrying {len(lics)} license file(s): {sorted(lics)[:4]}...")
+        return lics
+    meta = wheel_metadata_text(wheel)
+    spdx = declared_license(meta)
+    if spdx in _PERMISSIVE_SPDX:
+        canon = _LICENSE_DIR / f"{spdx}.txt"
+        if not canon.is_file():
+            sys.exit(f"{wheel.name}: declared {spdx} but tools/licenses/{spdx}.txt is missing")
+        author = next((ln.split(":", 1)[1].strip() for ln in meta.splitlines()
+                       if ln.lower().startswith(("author:", "author-email:"))), "the upstream project")
+        header = (f"{pkg_name}: this wheel ({wheel.name}) declares '{spdx}' in its METADATA "
+                  f"but ships no license file. The canonical {spdx} text below is supplied "
+                  f"by conda-torch to satisfy the license's redistribution condition; the "
+                  f"copyright holder is {author}.\n\n")
+        log(f"WARNING {pkg_name}: {wheel.name} declares {spdx} but ships NO license file; "
+            f"embedding the canonical {spdx} text")
+        return {f"{spdx}.txt": (header + canon.read_text()).encode()}
+    sys.exit(f"{wheel.name}: NO license files found in the source wheel and its declared "
+             f"license ({spdx!r}) is not a known permissive one — refusing to publish "
+             f"{pkg_name} without the license text (NVIDIA-class terms require it)")
+
+
+def cuda_arch_list(lt_stage: Path) -> str:
+    """conda-forge's CF_TORCH_CUDA_ARCH_LIST value, derived from the gencode
+    list the wheel baked into ATen/cuda/CUDAConfig.h. Same shape as their
+    build.sh: "7.5;8.0;...;12.0", with "+PTX" only on an arch the wheel
+    actually emitted PTX for (code=compute_N). Never hardcoded — the set
+    differs per torch version and flavour."""
+    hdr = next(lt_stage.rglob("ATen/cuda/CUDAConfig.h"), None)
+    if hdr is None:
+        sys.exit("libtorch stage has no ATen/cuda/CUDAConfig.h; cannot derive the CUDA arch list")
+    m = re.search(r'NVCC_FLAGS_EXTRA\s+"([^"]*)"', hdr.read_text(errors="replace"))
+    if not m:
+        sys.exit(f"{hdr}: no NVCC_FLAGS_EXTRA")
+    sm: set[int] = set()
+    ptx: set[int] = set()
+    for code in re.findall(r"code=(sm|compute)_(\d+)", m.group(1)):
+        (sm if code[0] == "sm" else ptx).add(int(code[1]))
+    if not sm:
+        sys.exit(f"{hdr}: NVCC_FLAGS_EXTRA lists no sm_ targets: {m.group(1)!r}")
+    out = []
+    for n in sorted(sm | ptx):
+        s = f"{n // 10}.{n % 10}"
+        out.append(s + ("+PTX" if n in ptx else ""))
+    return ";".join(out)
+
+
+# conda-forge's activation pair, verbatim (recipe/activate.sh etc. in
+# pytorch-cpu-feedstock), installed by THEIR libtorch output as
+# etc/conda/{activate,deactivate}.d/libtorch_{activate,deactivate}.{sh,bat}.
+# Their torchvision/torchaudio recipes read CF_TORCH_CUDA_ARCH_LIST at build
+# time; without it a faithful family build against our libtorch exits 1.
+_ACTIVATE_SH = """#!/bin/bash
+
+if [[ ! -v CF_TORCH_CUDA_ARCH_LIST ]]
+then
+    export CF_TORCH_CUDA_ARCH_LIST="@cf_torch_cuda_arch_list@"
+    # "NOT_SET" is used as the value because it is clearer (explicit) that the activation
+    # script was run and found no previous value for "CF_TORCH_CUDA_ARCH_LIST".
+    export CF_TORCH_CUDA_ARCH_LIST_BACKUP="NOT_SET"
+fi
+"""
+_DEACTIVATE_SH = """#!/bin/bash
+
+if [[ "${CF_TORCH_CUDA_ARCH_LIST_BACKUP:-}" == "NOT_SET" ]]
+then
+  unset CF_TORCH_CUDA_ARCH_LIST
+  unset CF_TORCH_CUDA_ARCH_LIST_BACKUP
+fi
+"""
+_ACTIVATE_BAT = """@echo off
+
+if not defined CF_TORCH_CUDA_ARCH_LIST (
+    set "CF_TORCH_CUDA_ARCH_LIST=@cf_torch_cuda_arch_list@"
+    :: "NOT_SET" is used as the value because it is clearer (explicit) that the activation
+    :: script was run and found no previous value for "CF_TORCH_CUDA_ARCH_LIST".
+    set "CF_TORCH_CUDA_ARCH_LIST_BACKUP=NOT_SET"
+)
+"""
+_DEACTIVATE_BAT = """@echo off
+
+if "%CF_TORCH_CUDA_ARCH_LIST_BACKUP%" == "NOT_SET" (
+    set "CF_TORCH_CUDA_ARCH_LIST="
+    set "CF_TORCH_CUDA_ARCH_LIST_BACKUP="
+)
+"""
+
+
+def install_activation(lt_stage: Path, subdir: str) -> str:
+    """Write the activation pair into the libtorch stage; returns the list.
+    No $PREFIX reference inside, so no prefix placeholder is needed."""
+    arch = cuda_arch_list(lt_stage)
+    ext = "bat" if subdir == "win-64" else "sh"
+    act = _ACTIVATE_BAT if ext == "bat" else _ACTIVATE_SH
+    deact = _DEACTIVATE_BAT if ext == "bat" else _DEACTIVATE_SH
+    for kind, body in (("activate", act), ("deactivate", deact)):
+        d = lt_stage / "etc" / "conda" / f"{kind}.d"
+        d.mkdir(parents=True, exist_ok=True)
+        text = body.replace("@cf_torch_cuda_arch_list@", arch)
+        if ext == "bat":
+            text = text.replace("\n", "\r\n")
+        (d / f"libtorch_{kind}.{ext}").write_text(text)
+    log(f"activation scripts: CF_TORCH_CUDA_ARCH_LIST={arch!r}")
+    return arch
 
 
 def provenance() -> dict:
@@ -1760,10 +1910,9 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     if has_elf:
         deps += floor_deps([sp]) + ["libzlib"]
 
-    lic = next((ln.split(":", 1)[1].strip() for ln in metadata_text.splitlines()
-                if ln.lower().startswith(("license-expression:", "license:"))
-                and 0 < len(ln.split(":", 1)[1].strip()) < 64),
-               "LicenseRef-Wheel-License")
+    # same classifier the gate uses (License-Expression / License / OSI
+    # classifier): triton declares MIT only via its classifier
+    lic = declared_license(metadata_text) or "LicenseRef-Wheel-License"
     pytag = "py" + py.replace(".", "")
     hsh = hashlib.sha256(f"{pypi_name}|{version}|{py}".encode()).hexdigest()[:8]
     index = {
@@ -2116,6 +2265,12 @@ def main() -> None:
         f"python >={py},<{nxt}.0a0",
         f"python_abi {py}.* *_cp{py.replace('.', '')}",
         f"libtorch {args.version} {lt_build}",
+        # Deliberate departure from wheel metadata (which leaves numpy
+        # optional): torch initialises numpy interop at import and warns
+        # loudly without it, tensor<->ndarray conversion is dead, and
+        # conda-forge's pytorch declares `numpy *` unconditionally. Same
+        # unbounded spec as theirs (torch >=2.3 is numpy-2 clean).
+        "numpy",
     ]
     if is_linux:
         pt_deps += floor_deps([pt_stage])
@@ -2151,6 +2306,11 @@ def main() -> None:
     lt_licdir.mkdir(parents=True, exist_ok=True)
     for flat, blob in sorted(torch_licenses.items()):
         (lt_licdir / flat).write_bytes(blob)
+
+    # conda-forge parity: the libtorch output exports CF_TORCH_CUDA_ARCH_LIST
+    # on activation so their torchvision/torchaudio recipes build against us
+    arch_list = install_activation(lt_stage, args.subdir)
+    lt_about["extra"]["cuda_arch_list"] = arch_list
 
     mm = args.version.split(".")
     nxt_minor = f"{mm[0]}.{int(mm[1]) + 1}"
