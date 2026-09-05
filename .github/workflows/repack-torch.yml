@@ -119,8 +119,25 @@ jobs:
                 echo "asset $b exists but has no fragment; downloading published bytes"
                 gh release download "$IN_PLATFORM" --pattern "$b" --output "$f" --clobber
               fi
-            else
-              gh release upload "$IN_PLATFORM" "$f"
+            elif ! gh release upload "$IN_PLATFORM" "$f"; then
+              # check-then-upload race: a sibling run (shared libtorch across
+              # shims) landed this asset between our listing and our upload.
+              # Shared builds are not byte-reproducible, so NEVER fragment
+              # our local copy for an asset someone else published — mirror
+              # the pre-check branch exactly.
+              sleep 5
+              if gh release view "$IN_PLATFORM" --json assets -q '.assets[].name' | grep -qxF "$b"; then
+                if [ -f "meta/$IN_PLATFORM/$b.json" ]; then
+                  echo "RACE: $b published by a sibling meanwhile; dropping local copy"
+                  rm "$f"
+                else
+                  echo "RACE: $b published by a sibling meanwhile; adopting published bytes"
+                  gh release download "$IN_PLATFORM" --pattern "$b" --output "$f" --clobber
+                fi
+              else
+                echo "upload of $b failed and the asset is still absent" >&2
+                exit 1
+              fi
             fi
           done
 
