@@ -120,6 +120,9 @@ Non-negotiables, each one empirically earned:
   top of these).
 - `tools/fragment.py` — `.conda` → repodata fragment under `meta/`.
 - `tools/make_repodata.py` — fragments → `site/` (repodata + index page).
+- `tools/sweep_solve.py` — verification: one live `pixi lock` per grid entry,
+  asserting the newest build resolves from this channel's release URL.
+- `tools/check_lock.py` — scans a lockfile against `known_bad.json`.
 
 ## Channel status (2026-09-02)
 
