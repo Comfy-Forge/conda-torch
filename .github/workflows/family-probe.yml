@@ -1,0 +1,207 @@
+name: family-probe
+
+# MEASUREMENT ONLY. Builds torchvision / torchaudio the conda-forge way
+# (their own feedstock recipes, rattler-build) against THIS channel's
+# repacked libtorch, on a stock ubuntu-latest runner, and prints timings.
+# Publishes nothing. Two modes per package:
+#   faithful — recipe + variant file untouched (only cuda_compiler_version
+#              changed): reports whether the host SOLVE even succeeds
+#              against our libtorch, and where build.sh dies if it does.
+#   adapted  — the minimal edits needed to build: torchvision gets an
+#              explicit TORCH_CUDA_ARCH_LIST (our pytorch ships no
+#              activate.sh exporting CF_TORCH_CUDA_ARCH_LIST) and drops
+#              libcudnn-dev from host (torchvision never compiles against
+#              cudnn; the dev package's cuda-line pin conflicts with our
+#              libtorch's cudnn); torchaudio gets a 12.8 branch in its
+#              hard-coded arch-list switch and drops torchcodec from host
+#              (a runtime delegate, only built by conda-forge for cuda129+).
+
+on:
+  workflow_dispatch:
+    inputs:
+      torch_version:
+        default: "2.11.0"
+      flavour:
+        default: "cu128"
+      python:
+        default: "3.12"
+      torchvision_version:
+        default: "0.26.0"
+      torchvision_feedstock_ref:
+        description: "torchvision-feedstock commit whose recipe is at torchvision_version"
+        default: "c5964ab599860a73ce1c2e42d59420f79afffef4"
+      torchaudio_version:
+        default: "2.11.0"
+      torchaudio_feedstock_ref:
+        default: "main"
+      arch_list:
+        description: "TORCH_CUDA_ARCH_LIST used in adapted mode (conda-forge's own cuda12.9 list by default)"
+        default: "5.0;6.0;7.0;7.5;8.0;8.6;8.9;9.0;10.0;12.0+PTX"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [torchvision, torchaudio]
+        mode: [faithful, adapted]
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      # inputs reach the shell only as environment variables (CWE-78)
+      IN_TORCH_VERSION: ${{ inputs.torch_version }}
+      IN_FLAVOUR: ${{ inputs.flavour }}
+      IN_PYTHON: ${{ inputs.python }}
+      IN_TV_VERSION: ${{ inputs.torchvision_version }}
+      IN_TV_REF: ${{ inputs.torchvision_feedstock_ref }}
+      IN_TA_VERSION: ${{ inputs.torchaudio_version }}
+      IN_TA_REF: ${{ inputs.torchaudio_feedstock_ref }}
+      IN_ARCH_LIST: ${{ inputs.arch_list }}
+      PKG: ${{ matrix.pkg }}
+      MODE: ${{ matrix.mode }}
+      CHANNEL: https://comfy-forge.github.io/conda-torch
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+          df -h / | tail -1
+
+      - name: Install rattler-build
+        run: |
+          curl -Ls https://github.com/prefix-dev/rattler-build/releases/latest/download/rattler-build-x86_64-unknown-linux-musl -o /usr/local/bin/rattler-build
+          chmod +x /usr/local/bin/rattler-build
+          rattler-build --version
+          nproc; free -g | head -2
+
+      - name: Fetch feedstock at the paired commit
+        run: |
+          set -eux
+          if [ "$PKG" = torchvision ]; then REF="$IN_TV_REF"; VER="$IN_TV_VERSION"; else REF="$IN_TA_REF"; VER="$IN_TA_VERSION"; fi
+          git clone -q "https://github.com/conda-forge/${PKG}-feedstock.git" fs
+          git -C fs checkout -q "$REF"
+          grep -n 'version:' fs/recipe/recipe.yaml | head -2
+          grep -q "version: \"$VER\"" fs/recipe/recipe.yaml || { echo "recipe at $REF is not at $VER" >&2; exit 1; }
+          # variant file: conda-forge's own linux_64 cuda12.9 / this python, with the cuda line retargeted
+          PYV="$IN_PYTHON"
+          src=$(ls fs/.ci_support/linux_64_cuda_compiler_version12.9python${PYV}.____*.yaml | head -1)
+          CUDA="${IN_FLAVOUR#cu}"; CUDA="${CUDA%?}.${CUDA: -1}"     # cu128 -> 12.8
+          TORCH_MM="${IN_TORCH_VERSION%.*}"                          # 2.11.0 -> 2.11
+          python3 - "$src" "$CUDA" "$TORCH_MM" <<'PY'
+          import sys, re
+          src, cuda, tmm = sys.argv[1:]
+          y = open(src).read()
+          y = re.sub(r"(cuda_compiler_version:\n- )'[0-9.]+'", rf"\1'{cuda}'", y)
+          y = re.sub(r"(\npytorch:\n- )'[0-9.]+'", rf"\1'{tmm}'", y)
+          y = re.sub(r"(\nlibtorch:\n- )'[0-9.]+'", rf"\1'{tmm}'", y)
+          # smithy-only keys
+          y = re.sub(r"\n(docker_image|channel_sources|channel_targets):\n- [^\n]+", "", y)
+          open("variant.yaml", "w").write(y)
+          PY
+          echo "=== variant.yaml ==="; cat variant.yaml
+
+      - name: Adapt recipe (adapted mode only)
+        if: matrix.mode == 'adapted'
+        run: |
+          set -eux
+          cd fs/recipe
+          if [ "$PKG" = torchvision ]; then
+            # our pytorch ships no activate.sh exporting CF_TORCH_CUDA_ARCH_LIST
+            python3 - "$IN_ARCH_LIST" <<'PY'
+          import sys, re
+          arch = sys.argv[1]
+          s = open("build.sh").read()
+          s2 = re.sub(r'if \[\[ -z "\$\{CF_TORCH_CUDA_ARCH_LIST:-\}" \]\]; then\n.*?\n\s*exit 1\n\s*fi',
+                      f'CF_TORCH_CUDA_ARCH_LIST="${{CF_TORCH_CUDA_ARCH_LIST:-{arch}}}"', s, flags=re.S)
+          assert s2 != s, "arch-list guard not found in build.sh"
+          open("build.sh", "w").write(s2)
+          r = open("recipe.yaml").read()
+          r2 = "\n".join(l for l in r.split("\n") if l.strip() != "- libcudnn-dev")
+          assert r2 != r, "libcudnn-dev not found in recipe.yaml"
+          open("recipe.yaml", "w").write(r2)
+          PY
+          else
+            python3 - "$IN_ARCH_LIST" <<'PY'
+          import sys
+          arch = sys.argv[1]
+          s = open("build.sh").read()
+          old = 'if [[ ${cuda_compiler_version} == 12.9 ]]; then'
+          assert old in s
+          s = s.replace(old, f'if [[ ${{cuda_compiler_version}} == 12.8 ]]; then\n    export TORCH_CUDA_ARCH_LIST="{arch}"\n  el' + old[:2] + old[2:], 1)
+          open("build.sh", "w").write(s)
+          r = open("recipe.yaml").read()
+          lines = r.split("\n"); out = []; in_host = False; dropped = 0
+          for l in lines:
+              if l.strip() == "host:": in_host = True
+              elif l.strip() == "run:": in_host = False
+              if in_host and l.strip() == "- torchcodec":
+                  dropped += 1; continue
+              out.append(l)
+          assert dropped == 1, f"expected to drop exactly one host torchcodec, dropped {dropped}"
+          open("recipe.yaml", "w").write("\n".join(out))
+          PY
+          fi
+          git -C .. diff --stat
+          git -C .. diff | head -60
+
+      - name: Build (timed, 5.5h guard)
+        id: build
+        run: |
+          set -u
+          mkdir -p out
+          START=$(date +%s)
+          set +e
+          timeout -k 60 19800 /usr/bin/time -v \
+            rattler-build build -r fs/recipe/recipe.yaml -m variant.yaml \
+              -c "$CHANNEL" -c conda-forge \
+              --test skip --output-dir out --log-style plain \
+              > build.log 2> time.log
+          RC=$?
+          set -e
+          END=$(date +%s)
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          echo "wall_s=$((END-START))" >> "$GITHUB_OUTPUT"
+          echo "=== RESULT $PKG/$MODE: rc=$RC wall=$((END-START))s ($(( (END-START)/60 )) min) ==="
+          [ $RC -eq 124 ] && echo "!!! TIMED OUT at the 5.5h guard (partial timing above)"
+          echo "=== peak RSS / time (GNU time -v) ==="; grep -E 'Maximum resident|Elapsed|User time|System time' time.log || true
+          echo "=== solver / phase markers ==="
+          grep -nE 'Resolving|Finished|Solved|cannot be installed|no candidates|conflict|UNSAT|incompatible|Error|error:|exit 1|CF_TORCH_CUDA_ARCH_LIST|unsupported cuda' build.log | head -60
+          echo "=== nvcc invocations (compile lines) ==="
+          echo "nvcc lines: $(grep -c 'nvcc' build.log || true)"
+          echo "=== .cu translation units in the source tree ==="
+          find out/bld -name '*.cu' 2>/dev/null | grep -v third_party | wc -l
+          find out/bld -name '*.cu' 2>/dev/null | grep -v third_party | sed 's|.*/work/||' | head -30
+          echo "=== artifacts ==="; find out -name '*.conda' -exec ls -la {} \; || true
+          echo "=== tail of build log ==="; tail -40 build.log
+          df -h / | tail -1
+
+      - name: Import check of the built package against our libtorch (adapted mode)
+        if: matrix.mode == 'adapted' && steps.build.outputs.rc == '0'
+        run: |
+          set -eux
+          curl -fsSL https://pixi.sh/install.sh | bash
+          export PATH="$HOME/.pixi/bin:$PATH"
+          mkdir -p chk && cd chk
+          cat > pixi.toml <<EOF
+          [workspace]
+          name = "chk"
+          channels = ["file://$GITHUB_WORKSPACE/out", "$CHANNEL", "conda-forge"]
+          platforms = [{ platform = "linux-64", cuda = "${IN_FLAVOUR#cu}" }]
+          [dependencies]
+          python = "${IN_PYTHON}.*"
+          $PKG = { version = "*", build = "cuda*" }
+          EOF
+          sed -i "s/cuda = \"\([0-9]*\)\([0-9]\)\"/cuda = \"\1.\2\"/" pixi.toml   # 128 -> 12.8
+          cat pixi.toml
+          # index the local output so it is a real channel
+          rattler-build --help >/dev/null
+          pixi exec rattler-index fs "$GITHUB_WORKSPACE/out" || pip install rattler-index >/dev/null 2>&1 || true
+          pixi lock -v 2>&1 | tail -30
+          pixi list | grep -iE "^($PKG|pytorch|libtorch|libcudnn|libjpeg|libnvjpeg)" || true
+          if [ "$PKG" = torchvision ]; then
+            CONDA_OVERRIDE_CUDA="${IN_FLAVOUR#cu}" pixi run python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); import torchvision.ops; print('ops import ok (CUDA kernels present:', torch.cuda.is_available(), ')')" 2>&1 | tail -5
+          else
+            CONDA_OVERRIDE_CUDA="${IN_FLAVOUR#cu}" pixi run python -c "import torch, torchaudio; print(torch.__version__, torchaudio.__version__); import torchaudio.functional as F; print('functional import ok')" 2>&1 | tail -5
+          fi
