@@ -69,6 +69,86 @@
       "reason": "deprecated name (superseded by libcudnn); ships NVIDIA binaries with zero license text despite repodata advertising LicenseRef-NVIDIA-SLA; no successor build under this name",
       "fixed_by": "libcudnn (any 9.20+ build in this channel)",
       "patched": "patches/linux-aarch64: constrains libcudnn <0.0a0 (forward-only)"
+    },
+    "pytorch-2.7.1-cuda129_generic_py310_h634b481_204.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.7.1-cuda129_generic_py311_h6dfac45_204.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.7.1-cuda129_generic_py312_h42b4d53_204.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.7.1-cuda129_generic_py313_hdb693e5_204.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.7.1-cuda129_generic_py39_h8a31f19_204.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.10.0-cuda129_generic_py310_h7062f17_205.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.10.0-cuda129_generic_py311_h129ec23_205.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.10.0-cuda129_repack_py311_hcefd32af_2.conda"
+    },
+    "pytorch-2.10.0-cuda129_generic_py312_h587896a_205.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.10.0-cuda129_generic_py313_h74a0c47_205.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.10.0-cuda129_repack_py313_h4f5684f0_2.conda"
+    },
+    "pytorch-2.10.0-cuda129_generic_py314_h69b1a48_205.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "(none \u2014 no PyPI wheel for this combo either; dead upstream-wide)"
+    },
+    "pytorch-2.11.0-cuda129_generic_py310_h2281be1_202.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.11.0-cuda129_repack_py310_hc15e61e3_2.conda"
+    },
+    "pytorch-2.11.0-cuda129_generic_py311_h7f65a4f_202.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.11.0-cuda129_repack_py311_h9dc41639_2.conda"
+    },
+    "pytorch-2.11.0-cuda129_generic_py312_h55e32eb_202.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.11.0-cuda129_repack_py312_h542e4742_2.conda"
+    },
+    "pytorch-2.11.0-cuda129_generic_py313_h6762949_202.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.11.0-cuda129_repack_py313_hcade99b3_2.conda"
+    },
+    "pytorch-2.11.0-cuda129_generic_py314_h213226b_202.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.11.0-cuda129_repack_py314_hd4d536d0_2.conda"
+    },
+    "pytorch-2.12.1-cuda129_generic_py310_h2281be1_200.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.12.1-cuda129_repack_py310_h73a1048c_2.conda"
+    },
+    "pytorch-2.12.1-cuda129_generic_py311_h7f65a4f_200.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.12.1-cuda129_repack_py311_h42ed9528_2.conda"
+    },
+    "pytorch-2.12.1-cuda129_generic_py312_h55e32eb_200.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.12.1-cuda129_repack_py312_h6dab26c0_2.conda"
+    },
+    "pytorch-2.12.1-cuda129_generic_py313_h6762949_200.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.12.1-cuda129_repack_py313_h775c18ae_2.conda"
+    },
+    "pytorch-2.12.1-cuda129_generic_py314_h213226b_200.conda": {
+      "reason": "conda-forge's own build no longer solves: their libcudss -> libcudss0 migration left this artifact's dependency graph unsatisfiable (mirrored byte-identically, so the rot is upstream's, not ours). It still carries a HIGHER build number than our working repack, so an unpinned solve prefers it and fails loudly",
+      "fixed_by": "pytorch-2.12.1-cuda129_repack_py314_hd866d50e_2.conda"
     }
   },
   "win-64": {
