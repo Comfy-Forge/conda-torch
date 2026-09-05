@@ -1109,15 +1109,21 @@ def win_basename_audit(imports: set[str], stripped: list[str],
         if not ok:
             sys.exit(f"{pkg}: NO conda-forge win-64 build in {spec!r} ships "
                      f"{sorted(want)} — unfixable basename gap, report as hole")
-        if len(ok) == len(vers):
-            out.append(d)  # basename stable across the whole window
-            continue
-        # basename is minor-versioned: narrow to the ok set's window
-        lo2 = min(ok, key=V)
-        hi_parts = max(ok, key=V).split(".")
-        hi2 = f"{hi_parts[0]}.{int(hi_parts[1]) + 1}"
-        newd = f"{pkg} >={max(lo or '0', lo2, key=V)},<{min(hi or hi2, hi2, key=V)}"
-        log(f"basename audit: {d!r} -> {newd!r} (only {ok} ship {sorted(want)})")
+        # Admit exactly the versions PROVEN to ship the basename and nothing
+        # newer. Two earlier heuristics were both unsound: keeping the wide
+        # window when every version admitted TODAY ships the name (cu129 had
+        # a single cuda-cupti build, so the wide <13.0a0 window survived and
+        # the first future build with a different basename would win the
+        # solve), and bounding at the next MINOR (<12.9) — CUPTI's basename
+        # third component also moves on toolkit PATCH releases
+        # (cupti64_2025.1.1 -> 2025.1.2), which a minor-level bound admits.
+        # A future release is re-admitted only once a rebuild's audit proves
+        # it ships the name; cupti is a hard-pinned profiler lib, so losing
+        # automatic patch pickup is the intended trade.
+        lo2, hi2 = min(ok, key=V), max(ok, key=V)
+        newd = f"{pkg} >={max(lo or '0', lo2, key=V)},<={hi2}"
+        if newd != d:
+            log(f"basename audit: {d!r} -> {newd!r} ({ok} ship {sorted(want)})")
         out.append(newd)
     for pkg in needed:
         if not any(d.split(" ", 1)[0] == pkg for d in deps):
