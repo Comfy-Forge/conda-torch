@@ -113,8 +113,11 @@ jobs:
           import sys, re
           arch = sys.argv[1]
           s = open("build.sh").read()
+          # NB: assembled by concatenation so the workflow file never contains the
+          # two-character sequence '$' + '{{', which GitHub parses as an expression
+          fallback = 'CF_TORCH_CUDA_ARCH_LIST="$' + '{CF_TORCH_CUDA_ARCH_LIST:-' + arch + '}"'
           s2 = re.sub(r'if \[\[ -z "\$\{CF_TORCH_CUDA_ARCH_LIST:-\}" \]\]; then\n.*?\n\s*exit 1\n\s*fi',
-                      f'CF_TORCH_CUDA_ARCH_LIST="${{CF_TORCH_CUDA_ARCH_LIST:-{arch}}}"', s, flags=re.S)
+                      lambda m: fallback, s, flags=re.S)
           assert s2 != s, "arch-list guard not found in build.sh"
           open("build.sh", "w").write(s2)
           r = open("recipe.yaml").read()
@@ -129,7 +132,8 @@ jobs:
           s = open("build.sh").read()
           old = 'if [[ ${cuda_compiler_version} == 12.9 ]]; then'
           assert old in s
-          s = s.replace(old, f'if [[ ${{cuda_compiler_version}} == 12.8 ]]; then\n    export TORCH_CUDA_ARCH_LIST="{arch}"\n  el' + old[:2] + old[2:], 1)
+          branch = 'if [[ $' + '{cuda_compiler_version} == 12.8 ]]; then\n    export TORCH_CUDA_ARCH_LIST="' + arch + '"\n  el' + old
+          s = s.replace(old, branch, 1)
           open("build.sh", "w").write(s)
           r = open("recipe.yaml").read()
           lines = r.split("\n"); out = []; in_host = False; dropped = 0
