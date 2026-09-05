@@ -27,8 +27,11 @@ RELEASES = "https://github.com/Comfy-Forge/conda-torch/releases/download"
 CHANNEL = "https://comfy-forge.github.io/conda-torch"
 # every subdir a client might request must exist (404s abort some solvers)
 ALWAYS_SUBDIRS = {"noarch", "linux-64", "linux-aarch64", "win-64", "osx-arm64", "osx-64"}
-# keys a patch may override; anything else in a patch entry is a hard error
-PATCHABLE_KEYS = {"depends", "constrains", "purls"}
+# keys a patch may override; anything else in a patch entry is a hard error.
+# run_exports/license included so a metadata-only fix to either never
+# forces a full artifact republish (a review found the original set too
+# narrow for exactly that case).
+PATCHABLE_KEYS = {"depends", "constrains", "purls", "run_exports", "license", "license_family"}
 
 
 def load_patches(patches_dir: Path, subdir: str, packages_conda: dict) -> int:
