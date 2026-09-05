@@ -155,6 +155,13 @@ jobs:
         run: |
           set -u
           mkdir -p out
+          # our libtorch/pytorch hard-depend on the __cuda virtual package (the
+          # conda-forge GPU-build convention); a GPU-less runner has none, so the
+          # host solve fails with "__cuda *, for which no candidates were found"
+          # unless the driver version is declared — exactly what conda-forge's
+          # own CI does for its CUDA builds.
+          CUDA="${IN_FLAVOUR#cu}"; export CONDA_OVERRIDE_CUDA="${CUDA%?}.${CUDA: -1}"
+          echo "CONDA_OVERRIDE_CUDA=$CONDA_OVERRIDE_CUDA"
           START=$(date +%s)
           set +e
           # rattler-build logs everything (solver, build) to STDERR; capture both
