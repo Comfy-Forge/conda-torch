@@ -157,11 +157,13 @@ jobs:
           mkdir -p out
           START=$(date +%s)
           set +e
-          timeout -k 60 19800 /usr/bin/time -v \
-            rattler-build build -r fs/recipe/recipe.yaml -m variant.yaml \
+          # rattler-build logs everything (solver, build) to STDERR; capture both
+          # streams into build.log and keep GNU time's report in its own file
+          timeout -k 60 19800 /usr/bin/time -v -o time.log \
+            rattler-build --log-style plain build -r fs/recipe/recipe.yaml -m variant.yaml \
               -c "$CHANNEL" -c conda-forge \
-              --test skip --output-dir out --log-style plain \
-              > build.log 2> time.log
+              --test skip --output-dir out \
+              > build.log 2>&1
           RC=$?
           set -e
           END=$(date +%s)
@@ -178,7 +180,8 @@ jobs:
           find out/bld -name '*.cu' 2>/dev/null | grep -v third_party | wc -l
           find out/bld -name '*.cu' 2>/dev/null | grep -v third_party | sed 's|.*/work/||' | head -30
           echo "=== artifacts ==="; find out -name '*.conda' -exec ls -la {} \; || true
-          echo "=== tail of build log ==="; tail -40 build.log
+          echo "=== head of build log ==="; head -40 build.log
+          echo "=== tail of build log ==="; tail -60 build.log
           df -h / | tail -1
 
       - name: Import check of the built package against our libtorch (adapted mode)
