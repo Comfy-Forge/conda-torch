@@ -73,8 +73,12 @@
   },
   "win-64": {
     "libtorch-2.8.0-cuda129_repack_h327d83bf_0.conda": {
-      "reason": "cuda-cupti dependency window is the flavour-wide <13.0a0 instead of the exact minor whose DLL basename torch_cuda.dll imports (cupti64_2025.2.1.dll). Solves correctly today only because conda-forge ships a single usable point release in that line; the first additional release breaks `import torch` with no solver-visible warning",
-      "fixed_by": "(none yet \u2014 open item; see README)"
+      "reason": "cuda-cupti dependency window is the flavour-wide <13.0a0 instead of the exact versions proven to ship the DLL basename torch_cuda.dll imports (cupti64_2025.2.1.dll). Solves correctly today only because conda-forge ships a single build in that line; the first additional cuda-cupti build with a different basename would win the solve and break `import torch` with no solver-visible warning",
+      "fixed_by": "libtorch-2.8.0-cuda129_repack_h327d83bf_2.conda"
+    },
+    "libtorch-2.8.0-cuda129_repack_h327d83bf_1.conda": {
+      "reason": "same wide cuda-cupti window as _0 (the earlier republish did not narrow it)",
+      "fixed_by": "libtorch-2.8.0-cuda129_repack_h327d83bf_2.conda"
     }
   }
 }
