@@ -65,7 +65,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q patchelf zstd
+          sudo apt-get install -y -q patchelf zstd binutils
           # no version pin: setuptools 80+ dropped python 3.8, and the win
           # launcher extraction (torch_repack.py) falls back to downloading
           # setuptools 80.9.0's wheel directly when the local install lacks

@@ -143,6 +143,19 @@ TORCH_OWN_HEADERS = {"ATen", "c10", "caffe2", "torch", "tensorpipe"}
 # libgfortran5, NVPL/ACL names could belong to future feedstocks). ABI
 # fidelity matters more than dedup here: torch pins an exact ACL build.
 VENDOR_DIR = "libtorch-vendored"
+
+# ---- sleef: the one fused third-party lib that can be made dynamic -------
+# libtorch_cpu's internal sleef calls all go through the PLT/GOT (0 direct
+# calls, measured), sleef is a pure-C stateless ABI, and torch CDLLs
+# libtorch_global_deps.so with RTLD_GLOBAL BEFORE libtorch_cpu. So a
+# DT_NEEDED on that 40 KB shim puts conda-forge's libsleef.so.3 into the
+# global scope first and every fused call binds there instead (548
+# bindings crossed, 0 fused, bit-identical — measured). Linux only:
+# Windows has no RTLD_GLOBAL shim mechanism.
+SLEEF_SONAME = "libsleef.so.3"
+SLEEF_FLOOR = "3.9.0"
+SLEEF_DEP = f"sleef >={SLEEF_FLOOR},<4.0a0"
+_CF_SLEEF_EXPORTS: dict[str, set[str]] = {}
 VENDOR_PRIVATE = re.compile(r"^lib(arm_compute|nvpl_|gfortran|openblas)")
 
 # The vendored-CUDA era (old aarch64 wheels, e.g. 2.4.1/2.5.1 cu124):
@@ -930,6 +943,141 @@ def patch_rpath(target: Path, rpath: str) -> None:
         sys.exit(f"rpath set did not stick on {target.name}: {got!r}")
 
 
+def sleef_referenced(libtorch_cpu: Path) -> set[str]:
+    """Every Sleef_* symbol libtorch_cpu binds DYNAMICALLY (JUMP_SLOT /
+    GLOB_DAT relocations) — the exact set that will resolve against a
+    preloaded libsleef.so.3. Arch-neutral: readelf names the reloc type
+    with an arch prefix but the words JUMP_SLOT/GLOB_DAT are common."""
+    proc = subprocess.run(["readelf", "-rW", str(libtorch_cpu)],
+                          capture_output=True, text=True)
+    # readelf exits 1 on any warning (e.g. unknown note types) while still
+    # emitting the full relocation listing — judge by output, not status
+    out = proc.stdout
+    if not out.strip():
+        sys.exit(f"sleef gate: readelf produced no relocations for {libtorch_cpu.name}: "
+                 f"{proc.stderr.strip()[:300]}")
+    refs = set()
+    for line in out.splitlines():
+        if ("JUMP_SLOT" in line or "GLOB_DAT" in line) and "Sleef_" in line:
+            m = re.search(r"(Sleef_\w+)", line)
+            if m:
+                refs.add(m.group(1))
+    return refs
+
+
+def cf_sleef_exports(subdir: str, work: Path) -> set[str]:
+    """Dynamic symbols DEFINED by conda-forge's sleef==SLEEF_FLOOR for subdir
+    (newest build), read from the real artifact's libsleef.so.3."""
+    if subdir in _CF_SLEEF_EXPORTS:
+        return _CF_SLEEF_EXPORTS[subdir]
+    cands = sorted((f for f in cf_files("sleef")
+                    if f.get("attrs", {}).get("subdir") == subdir
+                    and f["version"] == SLEEF_FLOOR and f["basename"].endswith(".conda")),
+                   key=lambda f: f.get("attrs", {}).get("build_number", 0), reverse=True)
+    if not cands:
+        sys.exit(f"sleef gate: conda-forge has no sleef=={SLEEF_FLOOR} .conda for {subdir}")
+    dest = work / f"cf-sleef-{subdir}.conda"
+    download("https://conda.anaconda.org/conda-forge/" + cands[0]["basename"], dest)
+    with zipfile.ZipFile(dest) as zf:
+        pkg = next(n for n in zf.namelist() if n.startswith("pkg-"))
+        raw = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(zf.read(pkg))).read()
+    so = work / f"cf-{SLEEF_SONAME}-{subdir}"
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
+        member = next((m for m in tf.getmembers()
+                       if m.name.endswith("/" + SLEEF_SONAME) and m.isfile()), None)
+        if member is None:
+            # lib/libsleef.so.3 may be a symlink to the versioned file
+            link = next((m for m in tf.getmembers() if m.name.endswith("/" + SLEEF_SONAME)), None)
+            target = link.linkname if link is not None else None
+            member = next((m for m in tf.getmembers()
+                           if target and m.name.endswith("/" + PurePosixPath(target).name)
+                           and m.isfile()), None)
+        if member is None:
+            sys.exit(f"sleef gate: {SLEEF_SONAME} not found inside {cands[0]['basename']}")
+        so.write_bytes(tf.extractfile(member).read())
+    out = subprocess.run(["nm", "-D", "--defined-only", str(so)],
+                         capture_output=True, text=True, check=True).stdout
+    defs = {ln.split()[-1] for ln in out.splitlines() if ln.strip()}
+    _CF_SLEEF_EXPORTS[subdir] = defs
+    return defs
+
+
+def sleef_gate(lt_stage: Path, subdir: str, work: Path) -> int:
+    """FAIL-CLOSED: every Sleef_* symbol libtorch_cpu binds dynamically must
+    be defined by conda-forge's sleef at the pinned floor. A missing symbol
+    would silently fall back to the fused copy — harmless for sleef's
+    stateless functions, but it must never happen unannounced."""
+    refs = sleef_referenced(lt_stage / "lib" / "libtorch_cpu.so")
+    if not refs:
+        sys.exit("sleef gate: libtorch_cpu.so binds no Sleef_* symbols dynamically — "
+                 "the redirect mechanism does not apply to this build; investigate")
+    defs = cf_sleef_exports(subdir, work)
+    missing = sorted(refs - defs)
+    if missing:
+        sys.exit(f"sleef gate: {len(missing)}/{len(refs)} Sleef_* symbols referenced by "
+                 f"libtorch_cpu are NOT defined by conda-forge sleef {SLEEF_FLOOR} ({subdir}): "
+                 f"{missing[:10]}{' ...' if len(missing) > 10 else ''}")
+    log(f"sleef gate: {len(refs)}/{len(refs)} referenced Sleef_* symbols defined by "
+        f"conda-forge sleef {SLEEF_FLOOR} ({subdir}, {len(defs)} exports)")
+    return len(refs)
+
+
+# fused third-party components and, where the binary carries a version
+# banner, a regex to lift it. Names are known from symbol censuses; most
+# have no version string and are recorded as unextractable rather than
+# guessed. sleef is dynamic on linux (see SLEEF_*), static on win.
+_SBOM_COMPONENTS: list[tuple[str, bytes | None]] = [
+    ("oneDNN", rb"oneDNN v(\d+\.\d+\.\d+)"),
+    ("MKL", rb"Math Kernel Library Version (\d{4}\.\d+(?:\.\d+)?)"),
+    ("protobuf", rb"\x00(\d+\.\d+\.\d+)\x00[^\x00]{0,40}protobuf"),
+    ("XNNPACK", None), ("fbgemm", None), ("asmjit", None), ("fmt", None),
+    ("cpuinfo", None), ("pthreadpool", None), ("kineto", None),
+]
+
+
+def vendored_sbom(lt_stage: Path, is_linux: bool) -> list[dict]:
+    """about.json extra.vendored — component, linkage, version-or-unextractable."""
+    cpu = next(iter(lt_stage.rglob("libtorch_cpu.so")), None) or \
+        next(iter(lt_stage.rglob("torch_cpu.dll")), None)
+    linalg = next(iter(lt_stage.rglob("libtorch_cuda_linalg.so")), None) or \
+        next(iter(lt_stage.rglob("torch_cuda_linalg.dll")), None)
+    blob = cpu.read_bytes() if cpu else b""
+    sbom = []
+    for comp, pat in _SBOM_COMPONENTS:
+        ver = "unextractable"
+        if pat and blob:
+            m = re.search(pat, blob)
+            if m:
+                ver = m.group(1).decode(errors="replace")
+        sbom.append({"component": comp, "linkage": "static", "version": ver})
+    mver = "unextractable"
+    if linalg:
+        m = re.search(rb"MAGMA[ _v]?(\d+\.\d+\.\d+)", linalg.read_bytes())
+        if m:
+            mver = m.group(1).decode(errors="replace")
+    sbom.append({"component": "magma", "linkage": "static", "version": mver,
+                 "in": linalg.name if linalg else "absent"})
+    sbom.append({"component": "sleef",
+                 "linkage": "dynamic (conda-forge sleef via libtorch_global_deps DT_NEEDED)"
+                 if is_linux else "static",
+                 "version": SLEEF_DEP if is_linux else "unextractable"})
+    return sbom
+
+
+def add_needed(target: Path, soname: str) -> None:
+    """patchelf --add-needed, with copy-before-patch discipline (patchelf
+    writes through hardlinks) and a read-back assertion."""
+    if target.stat().st_nlink > 1:
+        tmp = target.with_suffix(target.suffix + ".private")
+        shutil.copyfile(target, tmp)
+        tmp.replace(target)
+    run("patchelf", "--add-needed", soname, str(target))
+    needed = subprocess.run(["patchelf", "--print-needed", str(target)],
+                            capture_output=True, text=True, check=True).stdout.split()
+    if soname not in needed:
+        sys.exit(f"--add-needed {soname} did not stick on {target.name}: {needed}")
+
+
 def scrub_site_elfs(pt_stage: Path, sp: Path) -> None:
     """Every remaining ELF in site-packages gets a clean RPATH: $ORIGIN
     plus the relative hop to $PREFIX/lib. Kills the wheel's dormant
@@ -1135,7 +1283,8 @@ def win_basename_audit(imports: set[str], stripped: list[str],
 # per-platform splits: populate lt_stage/pt_stage from the extracted wheel
 # --------------------------------------------------------------------------
 
-def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[str, str]:
+def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str,
+                work: Path) -> dict[str, str]:
     """One split for both linux subdirs. The lib set is enumerated from the
     wheel (torch >=2.9 grew libtorch_nvshmem on x86 too; old versions have
     fewer libs), never from a static list."""
@@ -1200,6 +1349,22 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str) -> dict[s
     for so in vendored:
         patch_rpath(lt_stage / "lib" / VENDOR_DIR / so, "$ORIGIN:$ORIGIN/..")
     scrub_site_elfs(pt_stage, sp)
+
+    # ---- sleef redirect (see SLEEF_* constants) ----------------------------
+    # Gate first, then patch the RTLD_GLOBAL shim. The shim is opened through
+    # the torch/lib symlink, where $ORIGIN expands to torch/lib, so ONLY the
+    # ADDED_RPATH entry ($PREFIX/lib) can find libsleef — assert it is there.
+    shim = lt_stage / "lib" / "libtorch_global_deps.so"
+    if not shim.is_file():
+        sys.exit("libtorch_global_deps.so missing from the libtorch stage; "
+                 "the sleef redirect relies on that RTLD_GLOBAL shim")
+    sleef_gate(lt_stage, subdir, work)
+    got = subprocess.run(["patchelf", "--print-rpath", str(shim)],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    if ADDED_RPATH not in got.split(":"):
+        sys.exit(f"shim RPATH {got!r} lacks {ADDED_RPATH}; libsleef could not resolve")
+    add_needed(shim, SLEEF_SONAME)
+    log(f"sleef redirect: {shim.name} now DT_NEEDs {SLEEF_SONAME} (dep {SLEEF_DEP!r})")
     return {}, stripped_cuda
 
 
@@ -1870,7 +2035,8 @@ def main() -> None:
     # ---- platform split ----------------------------------------------------
     extra_lt_deps: list[str] = []
     if is_linux:
-        prefix_files, stripped_cuda = split_linux(sp, pt_stage, lt_stage, args.subdir)
+        prefix_files, stripped_cuda = split_linux(sp, pt_stage, lt_stage, args.subdir,
+                                                  args.work)
         if stripped_cuda:
             extra_lt_deps += vendored_cuda_dep_list(
                 stripped_cuda, args.version, args.flavour, args.py, args.subdir)
@@ -1924,7 +2090,7 @@ def main() -> None:
         # inside the pinned windows (cupti's is minor-versioned)
         lt_deps = win_basename_audit(win_imports, win_stripped, lt_deps, flavour)
     else:
-        lt_deps = cuda_deps(requires, flavour) + ["libgomp"] + floor_deps([lt_stage])
+        lt_deps = cuda_deps(requires, flavour) + ["libgomp", SLEEF_DEP] + floor_deps([lt_stage])
         if args.subdir == "linux-aarch64":
             lt_deps.append("libzlib")  # vendored gfortran/cudnn_graph NEED libz.so.1
     # a version satisfying the bound is not enough — a conda-forge BUILD
@@ -1975,6 +2141,11 @@ def main() -> None:
                   "wheel_hash_source": hash_source},
     }
 
+    # best-effort SBOM of the third-party code fused into libtorch (forward-
+    # only; a security team otherwise has to redo strings/nm archaeology)
+    lt_about = dict(about)
+    lt_about["extra"] = {**about["extra"], "vendored": vendored_sbom(lt_stage, is_linux)}
+
     # licenses ride the libtorch payload too (its stage has no dist-info)
     lt_licdir = lt_stage / "share" / "licenses" / "libtorch"
     lt_licdir.mkdir(parents=True, exist_ok=True)
@@ -1986,7 +2157,7 @@ def main() -> None:
     lt_rex = {"weak": [f"libtorch >={args.version},<{nxt_minor}.0a0"]}
     pt_rex = {"weak": [f"pytorch >={args.version},<{nxt_minor}.0a0",
                        f"libtorch >={args.version},<{nxt_minor}.0a0"]}
-    emit_conda(lt_stage, args.outdir, lt_index, about, {},
+    emit_conda(lt_stage, args.outdir, lt_index, lt_about, {},
                licenses=torch_licenses, run_exports=lt_rex)
     emit_conda(pt_stage, args.outdir, pt_index, about, prefix_files,
                licenses=torch_licenses, run_exports=pt_rex)

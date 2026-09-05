@@ -136,6 +136,7 @@ def verify(conda_path: Path) -> None:
             import re as _re
             n_elf = 0
             bad: list[str] = []
+            shim_needs_sleef: bool | None = None  # None = shim not in this package
             for n, m in members.items():
                 if not m.isfile():
                     continue
@@ -151,6 +152,8 @@ def verify(conda_path: Path) -> None:
                 dyn = subprocess.run(["readelf", "-d", str(tmp)],
                                      capture_output=True, text=True).stdout
                 base = n.rsplit("/", 1)[-1]
+                if base == "libtorch_global_deps.so":
+                    shim_needs_sleef = "[libsleef.so.3]" in dyn
                 if "libgomp" in base:
                     bad.append(f"{base}: vendored libgomp")
                     continue
@@ -165,6 +168,15 @@ def verify(conda_path: Path) -> None:
                   f"found {n_elf} ELFs to lint")
             check(not bad, f"RPATH lint clean over {n_elf} ELFs "
                   + ("" if not bad else f"— violations: {bad[:5]}"))
+            # sleef redirect invariant, both directions: a libtorch that
+            # depends on sleef must ship a shim that DT_NEEDs libsleef.so.3,
+            # and a shim that NEEDs it must be backed by the dependency.
+            if name == "libtorch" and "repack" in index.get("build", ""):
+                dep_sleef = any(d.split(" ", 1)[0] == "sleef" for d in index.get("depends", []))
+                check(shim_needs_sleef is not None, "libtorch_global_deps.so present in libtorch")
+                if shim_needs_sleef is not None:
+                    check(dep_sleef == shim_needs_sleef,
+                          f"sleef redirect consistent (dep={dep_sleef}, shim NEEDs={shim_needs_sleef})")
 
     print(f"--- {conda_path.name}: {'PASS' if FAILS == before else 'FAILURES ABOVE'}")
 
