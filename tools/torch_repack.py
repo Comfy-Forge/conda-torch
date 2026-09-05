@@ -1156,11 +1156,19 @@ def sleef_gate(lt_stage: Path, subdir: str, work: Path) -> int:
     """FAIL-CLOSED: every Sleef_* symbol libtorch_cpu binds dynamically must
     be defined by conda-forge's sleef at the pinned floor. A missing symbol
     would silently fall back to the fused copy — harmless for sleef's
-    stateless functions, but it must never happen unannounced."""
+    stateless functions, but it must never happen unannounced.
+
+    Three outcomes, not two: some builds contain no sleef at all (verified
+    on aarch64 cu124 2.4.1/2.5.1 — zero Sleef relocations, zero dynamic
+    symbols, not even a string; they use NVPL BLAS/LAPACK instead). For
+    those the redirect is inapplicable, not broken: skip it and ship
+    without the dependency. Only a build that references sleef and cannot
+    have every symbol satisfied is a hazard worth stopping for."""
     refs = sleef_referenced(lt_stage / "lib" / "libtorch_cpu.so")
     if not refs:
-        sys.exit("sleef gate: libtorch_cpu.so binds no Sleef_* symbols dynamically — "
-                 "the redirect mechanism does not apply to this build; investigate")
+        log(f"sleef gate: no Sleef_* references in libtorch_cpu ({subdir}) — this build "
+            "does not use sleef (NVPL/ACL math instead); skipping the redirect")
+        return 0
     defs = cf_sleef_exports(subdir, work)
     missing = sorted(refs - defs)
     if missing:
@@ -1207,10 +1215,23 @@ def vendored_sbom(lt_stage: Path, is_linux: bool) -> list[dict]:
             mver = m.group(1).decode(errors="replace")
     sbom.append({"component": "magma", "linkage": "static", "version": mver,
                  "in": linalg.name if linalg else "absent"})
-    sbom.append({"component": "sleef",
-                 "linkage": "dynamic (conda-forge sleef via libtorch_global_deps DT_NEEDED)"
-                 if is_linux else "static",
-                 "version": SLEEF_DEP if is_linux else "unextractable"})
+    # linkage read off the staged shim, never assumed from platform: some
+    # linux builds (aarch64 cu124) contain no sleef at all and get neither
+    # the redirect nor the dependency.
+    _shim = lt_stage / "lib" / "libtorch_global_deps.so"
+    redirected = is_linux and _shim.is_file() and SLEEF_SONAME in subprocess.run(
+        ["patchelf", "--print-needed", str(_shim)],
+        capture_output=True, text=True, check=True).stdout.split()
+    if redirected:
+        sbom.append({"component": "sleef",
+                     "linkage": "dynamic (conda-forge sleef via libtorch_global_deps DT_NEEDED)",
+                     "version": SLEEF_DEP})
+    elif is_linux:
+        sbom.append({"component": "sleef", "linkage": "absent",
+                     "version": "not present in this build (NVPL/ACL math)"})
+    else:
+        sbom.append({"component": "sleef", "linkage": "static",
+                     "version": "unextractable"})
     return sbom
 
 
@@ -1508,7 +1529,11 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str,
     if not shim.is_file():
         sys.exit("libtorch_global_deps.so missing from the libtorch stage; "
                  "the sleef redirect relies on that RTLD_GLOBAL shim")
-    sleef_gate(lt_stage, subdir, work)
+    if not sleef_gate(lt_stage, subdir, work):
+        # build carries no sleef: nothing to redirect, and adding the dep
+        # would pull a library nothing binds. The verifier's invariant is
+        # "dep iff shim NEEDs", which holds for neither-side too.
+        return {}, stripped_cuda
     got = subprocess.run(["patchelf", "--print-rpath", str(shim)],
                          capture_output=True, text=True, check=True).stdout.strip()
     if ADDED_RPATH not in got.split(":"):
@@ -2239,7 +2264,17 @@ def main() -> None:
         # inside the pinned windows (cupti's is minor-versioned)
         lt_deps = win_basename_audit(win_imports, win_stripped, lt_deps, flavour)
     else:
-        lt_deps = cuda_deps(requires, flavour) + ["libgomp", SLEEF_DEP] + floor_deps([lt_stage])
+        # sleef dep iff the shim actually got the redirect — read it back off
+        # the staged binary rather than assuming, so the verifier's
+        # "dep iff shim NEEDs" invariant holds by construction (builds with
+        # no sleef at all, e.g. aarch64 cu124, legitimately get neither).
+        _shim = lt_stage / "lib" / "libtorch_global_deps.so"
+        _shim_needs_sleef = SLEEF_SONAME in subprocess.run(
+            ["patchelf", "--print-needed", str(_shim)],
+            capture_output=True, text=True, check=True).stdout.split()
+        lt_deps = cuda_deps(requires, flavour) + ["libgomp"] + floor_deps([lt_stage])
+        if _shim_needs_sleef:
+            lt_deps.append(SLEEF_DEP)
         if args.subdir == "linux-aarch64":
             lt_deps.append("libzlib")  # vendored gfortran/cudnn_graph NEED libz.so.1
     # a version satisfying the bound is not enough — a conda-forge BUILD
