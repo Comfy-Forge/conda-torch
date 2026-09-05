@@ -1,8 +1,8 @@
 {
-  "_about": "Published artifacts are immutable, so a defective build can never be removed — only superseded by a higher build number and/or neutralised by a metadata patch in patches/. Both of those protect FUTURE solves only: an existing pixi.lock keeps installing whatever it pinned, silently. This list is the static, self-serve record of every build known to be defective, so anyone holding a lockfile can check it (tools/check_lock.py). Keyed by exact filename; 'fixed_by' names the superseding build to re-lock onto.",
+  "_about": "Published artifacts are immutable, so a defective build can never be removed \u2014 only superseded by a higher build number and/or neutralised by a metadata patch in patches/. Both of those protect FUTURE solves only: an existing pixi.lock keeps installing whatever it pinned, silently. This list is the static, self-serve record of every build known to be defective, so anyone holding a lockfile can check it (tools/check_lock.py). Keyed by exact filename; 'fixed_by' names the superseding build to re-lock onto.",
   "linux-64": {
     "libtorch-2.13.0-cuda129_repack_hf3fb3d0b_1.conda": {
-      "reason": "depends on the shadowable name nvidia-cudnn instead of libcudnn; can silently co-install two cudnn versions at identical paths when another package constrains libcudnn (the solver then prefers this build precisely because it never mentions libcudnn) — torch dies at first conv with a version mismatch",
+      "reason": "depends on the shadowable name nvidia-cudnn instead of libcudnn; can silently co-install two cudnn versions at identical paths when another package constrains libcudnn (the solver then prefers this build precisely because it never mentions libcudnn) \u2014 torch dies at first conv with a version mismatch",
       "fixed_by": "libtorch-2.13.0-cuda129_repack_hf3fb3d0b_2.conda",
       "patched": "patches/linux-64: constrains libcudnn <0.0a0 (forward-only)"
     },
@@ -21,11 +21,13 @@
     },
     "nvidia-cudnn-9.19.0.56-cuda12_repack_hd81ae946_0.conda": {
       "reason": "deprecated name (superseded by libcudnn); ships NVIDIA binaries with zero license text despite repodata advertising LicenseRef-NVIDIA-SLA; no successor build under this name",
-      "fixed_by": "libcudnn (any 9.19+ build in this channel)"
+      "fixed_by": "libcudnn (any 9.19+ build in this channel)",
+      "patched": "patches/linux-64: constrains libcudnn <0.0a0 (forward-only)"
     },
     "nvidia-cudnn-9.20.0.48-cuda12_repack_h504638c9_0.conda": {
       "reason": "same as nvidia-cudnn 9.19.0.56",
-      "fixed_by": "libcudnn (any 9.20+ build in this channel)"
+      "fixed_by": "libcudnn (any 9.20+ build in this channel)",
+      "patched": "patches/linux-64: constrains libcudnn <0.0a0 (forward-only)"
     }
   },
   "linux-aarch64": {
@@ -50,14 +52,29 @@
       "patched": "patches/linux-aarch64: constrains libcudnn <0.0a0 (forward-only)"
     },
     "nvidia-nvshmem-3.3.24-cuda12_repack_h95a54554_0.conda": {
-      "reason": "ships NVIDIA binaries with zero license text; orphaned — no published libtorch depends on it (every cuda12 range prefers the licensed 3.4.5 build), so it is effectively unreachable, but it remains resolvable by an exact pin",
+      "reason": "ships NVIDIA binaries with zero license text; orphaned \u2014 no published libtorch depends on it (every cuda12 range prefers the licensed 3.4.5 build), so it is effectively unreachable, but it remains resolvable by an exact pin",
       "fixed_by": "nvidia-nvshmem-3.4.5-cuda12_repack_h42b93091_1.conda"
+    },
+    "nvidia-cudnn-9.17.1.4-cuda12_repack_h5ef70778_0.conda": {
+      "reason": "deprecated name (superseded by libcudnn); ships NVIDIA binaries with zero license text despite repodata advertising LicenseRef-NVIDIA-SLA; no successor build under this name",
+      "fixed_by": "libcudnn (any 9.17+ build in this channel)",
+      "patched": "patches/linux-aarch64: constrains libcudnn <0.0a0 (forward-only)"
+    },
+    "nvidia-cudnn-9.19.0.56-cuda12_repack_hd81ae946_0.conda": {
+      "reason": "deprecated name (superseded by libcudnn); ships NVIDIA binaries with zero license text despite repodata advertising LicenseRef-NVIDIA-SLA; no successor build under this name",
+      "fixed_by": "libcudnn (any 9.19+ build in this channel)",
+      "patched": "patches/linux-aarch64: constrains libcudnn <0.0a0 (forward-only)"
+    },
+    "nvidia-cudnn-9.20.0.48-cuda12_repack_h504638c9_0.conda": {
+      "reason": "deprecated name (superseded by libcudnn); ships NVIDIA binaries with zero license text despite repodata advertising LicenseRef-NVIDIA-SLA; no successor build under this name",
+      "fixed_by": "libcudnn (any 9.20+ build in this channel)",
+      "patched": "patches/linux-aarch64: constrains libcudnn <0.0a0 (forward-only)"
     }
   },
   "win-64": {
     "libtorch-2.8.0-cuda129_repack_h327d83bf_0.conda": {
       "reason": "cuda-cupti dependency window is the flavour-wide <13.0a0 instead of the exact minor whose DLL basename torch_cuda.dll imports (cupti64_2025.2.1.dll). Solves correctly today only because conda-forge ships a single usable point release in that line; the first additional release breaks `import torch` with no solver-visible warning",
-      "fixed_by": "(none yet — open item; see README)"
+      "fixed_by": "(none yet \u2014 open item; see README)"
     }
   }
 }
