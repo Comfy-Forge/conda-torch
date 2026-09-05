@@ -1,0 +1,41 @@
+{
+ "arch": "x86_64",
+ "build": "cuda128_repack_py311_h18039e26_2",
+ "build_number": 2,
+ "depends": [
+  "__glibc >=2.28",
+  "filelock",
+  "fsspec",
+  "jinja2",
+  "libgcc",
+  "libstdcxx >=6",
+  "libtorch 2.8.0 cuda128_repack_h5a2b127e_2",
+  "networkx",
+  "numpy",
+  "python >=3.11,<3.12.0a0",
+  "python_abi 3.11.* *_cp311",
+  "sympy >=1.13.3",
+  "triton ==3.4.0",
+  "typing_extensions >=4.10.0"
+ ],
+ "license": "BSD-3-Clause",
+ "license_family": "BSD",
+ "md5": "65f3e38bcdd37dd781d8cbcc0b49dc28",
+ "name": "pytorch",
+ "platform": "linux",
+ "provenance": {
+  "run_id": "33994372553",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/33994372553",
+  "source_commit": "4a2d0b8fc3ab212fc5581fb90c1168e2f34481de",
+  "wheel_hash_source": "index+grid",
+  "wheel_sha256": "039b9dcdd6bdbaa10a8a5cd6be22c4cb3e3589a341e5f904cbb571ca28f55bed"
+ },
+ "purls": [
+  "pkg:pypi/torch@2.8.0"
+ ],
+ "sha256": "67ac27ca3e101efd6f99b75d2a6f5e058c864933e52950ffd38984997f7a26a0",
+ "size": 24854117,
+ "subdir": "linux-64",
+ "timestamp": 1788645392276,
+ "version": "2.8.0"
+}
