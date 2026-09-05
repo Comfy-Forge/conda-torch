@@ -37,15 +37,26 @@ jobs:
     runs-on: ${{ contains(fromJSON('["3.8", "3.9"]'), inputs.python) && 'ubuntu-22.04' || 'ubuntu-latest' }}
     env:
       GH_TOKEN: ${{ github.token }}
+      # workflow_dispatch inputs are routed through env so they reach the
+      # shell as real environment variables. A raw ${{ inputs.x }} inside a
+      # run: block is substituted as TEXT before bash parses the line, so an
+      # input containing `"; ...; y="` breaks out of any quoting and executes
+      # (CWE-78). Never reference inputs.* directly inside run: below.
+      IN_VERSION: ${{ inputs.version }}
+      IN_FLAVOUR: ${{ inputs.flavour }}
+      IN_PYTHON: ${{ inputs.python }}
+      IN_PLATFORM: ${{ inputs.platform }}
+      IN_BUILD_NUMBER: ${{ inputs.build_number }}
+      IN_SIDE_BUILD_NUMBER: ${{ inputs.side_build_number }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Free disk space
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
           df -h /
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ inputs.python }}
           # 3.15 is RC-only until October: .pyc magic is already frozen at RC
@@ -64,12 +75,12 @@ jobs:
       - name: Repack
         run: |
           python tools/torch_repack.py \
-            --version "${{ inputs.version }}" \
-            --flavour "${{ inputs.flavour }}" \
-            --python "${{ inputs.python }}" \
-            --subdir "${{ inputs.platform }}" \
-            --build-number "${{ inputs.build_number }}" \
-            --side-build-number "${{ inputs.side_build_number }}" \
+            --version "$IN_VERSION" \
+            --flavour "$IN_FLAVOUR" \
+            --python "$IN_PYTHON" \
+            --subdir "$IN_PLATFORM" \
+            --build-number "$IN_BUILD_NUMBER" \
+            --side-build-number "$IN_SIDE_BUILD_NUMBER" \
             -o dist --work work --delete-wheel --skip-published
           rm -rf work
           ls -la dist/
@@ -84,32 +95,32 @@ jobs:
         # signed SLSA provenance for every artifact; continue-on-error so an
         # org-level feature gap can never block a publish
         continue-on-error: true
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: "dist/*.conda"
 
       - name: Upload to release (immutable — never overwrite an asset)
         run: |
-          gh release create "${{ inputs.platform }}" \
-            --title "${{ inputs.platform }} packages" \
-            --notes "Storage release for ${{ inputs.platform }} subdir packages. Do not delete: repodata base_url points here." \
+          gh release create "$IN_PLATFORM" \
+            --title "$IN_PLATFORM packages" \
+            --notes "Storage release for $IN_PLATFORM subdir packages. Do not delete: repodata base_url points here." \
             || true
-          existing=$(gh release view "${{ inputs.platform }}" --json assets -q '.assets[].name')
+          existing=$(gh release view "$IN_PLATFORM" --json assets -q '.assets[].name')
           for f in dist/*.conda; do
             [ -e "$f" ] || continue  # empty dist: a sibling run published everything
             b=$(basename "$f")
             if echo "$existing" | grep -qxF "$b"; then
-              if [ -f "meta/${{ inputs.platform }}/$b.json" ]; then
+              if [ -f "meta/$IN_PLATFORM/$b.json" ]; then
                 echo "SKIP already-published $b (published artifacts are immutable)"
                 rm "$f"
               else
                 # a previous run uploaded the asset but died before committing
                 # its fragment: fragment the PUBLISHED bytes, not this rebuild
                 echo "asset $b exists but has no fragment; downloading published bytes"
-                gh release download "${{ inputs.platform }}" --pattern "$b" --output "$f" --clobber
+                gh release download "$IN_PLATFORM" --pattern "$b" --output "$f" --clobber
               fi
             else
-              gh release upload "${{ inputs.platform }}" "$f"
+              gh release upload "$IN_PLATFORM" "$f"
             fi
           done
 
@@ -117,13 +128,13 @@ jobs:
         run: |
           for f in dist/*.conda; do
             [ -e "$f" ] || continue
-            python3 tools/fragment.py "$f" "${{ inputs.platform }}"
+            python3 tools/fragment.py "$f" "$IN_PLATFORM"
           done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add meta
           git diff --cached --quiet && { echo "no new fragments"; exit 0; }
-          git commit -m "Add fragments: torch ${{ inputs.version }} ${{ inputs.flavour }} py${{ inputs.python }} ${{ inputs.platform }}"
+          git commit -m "Add fragments: torch $IN_VERSION $IN_FLAVOUR py$IN_PYTHON $IN_PLATFORM"
           for i in 1 2 3 4 5 6 7 8; do
             git push origin main && break
             sleep $((RANDOM % 10))

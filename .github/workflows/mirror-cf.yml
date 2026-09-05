@@ -27,18 +27,28 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Mirror from conda-forge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MIRROR_CACHE: ${{ runner.temp }}/mirror-cache
+          # inputs routed through env, never interpolated into run: as text
+          # (a raw ${{ inputs.x }} is substituted before bash parses the line,
+          # so shell metacharacters in the input execute — CWE-78).
+          IN_MANIFEST: ${{ inputs.manifest }}
+          IN_SUBDIR: ${{ inputs.subdir }}
+          IN_FILENAMES: ${{ inputs.filenames }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.manifest }}" ]; then
-            python3 tools/mirror_cf.py --manifest "${{ inputs.manifest }}"
+          if [ -n "$IN_MANIFEST" ]; then
+            python3 tools/mirror_cf.py --manifest "$IN_MANIFEST"
           else
-            [ -n "${{ inputs.subdir }}" ] && [ -n "${{ inputs.filenames }}" ] || { echo "need subdir+filenames or manifest" >&2; exit 1; }
-            python3 tools/mirror_cf.py --subdir "${{ inputs.subdir }}" ${{ inputs.filenames }}
+            [ -n "$IN_SUBDIR" ] && [ -n "$IN_FILENAMES" ] || { echo "need subdir+filenames or manifest" >&2; exit 1; }
+            # $IN_FILENAMES is deliberately unquoted: it is a space-separated
+            # list that must word-split into separate argv entries. That is
+            # safe here because an env var's word-splitting never re-invokes
+            # the shell parser on metacharacters the way text substitution did.
+            python3 tools/mirror_cf.py --subdir "$IN_SUBDIR" $IN_FILENAMES
           fi
       - name: Commit fragments
         run: |

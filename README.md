@@ -44,6 +44,20 @@ Two more rules that are load-bearing:
 - **Channel order matters.** This channel first, conda-forge second. The
   reversed order shadows `pytorch` behind conda-forge's coverage holes
   under strict channel priority.
+- **Drop `defaults`.** Anaconda's own `main` channel (present by default in
+  most Miniconda/Anaconda installs) ships its *own* actively-maintained
+  `pytorch`, `libtorch`, `triton`, and `libcudnn` builds under a third
+  build-string convention (`gpu_cuda128_h…`). The selector metapackages
+  don't match them, but a bare `pytorch = "*"` with `defaults` at equal or
+  higher priority silently resolves to Anaconda's build instead of this
+  channel's or conda-forge's. Use `nodefaults` (conda) or simply omit
+  `defaults` from `channels` (pixi never adds it).
+- **Metadata patches are forward-only.** A fix applied via `patches/`
+  protects every *future* solve; it cannot reach a `pixi.lock` that already
+  pins a bad build (`pixi install --locked` never re-reads repodata), nor a
+  manifest that pins an exact build string. `known_bad.json` lists every
+  such build and its fixed replacement; `tools/check_lock.py` scans a
+  lockfile against it.
 - **Client floor**: pixi ≥ 0.40, conda ≥ 24.5, mamba/micromamba ≥ 2.0.
   mamba/micromamba 1.x solves but then fails at fetch with a 404 (no
   CEP-15 `base_url` support); condas predating repodata_version 2 reject
