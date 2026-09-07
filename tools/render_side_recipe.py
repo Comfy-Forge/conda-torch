@@ -60,6 +60,16 @@ def render(req: dict, meta: dict, *, wheel_url: str, wheel_sha: str,
     lic_files = "".join(f"\n{pad}  - {json.dumps(n)}"
                         for n in sorted(meta["licenses"])) or " []"
 
+    # Only emit the about fields this artifact actually has: rattler-build
+    # rejects an empty homepage as a relative URL, and the PyPI repacks
+    # (triton) carry no home at all.
+    about_lines = []
+    for key, field in (("home", "homepage"), ("license", "license"),
+                       ("summary", "summary")):
+        if about.get(key):
+            about_lines.append(f"\n  {field}: {json.dumps(about[key])}")
+    about_block = "".join(about_lines)
+
     side_args = (f"--side-kind {req['kind']} --side-name {req['pypi_name']} "
                  f"--side-version {req['version']}")
     if req["kind"] == "nvidia-lib":
@@ -104,10 +114,7 @@ requirements:
   run:{dep_list(index.get('depends', []), 4)}
   run_constraints:{dep_list(index.get('constrains', []), 4)}
 
-about:
-  homepage: {json.dumps(about.get('home', ''))}
-  license: {json.dumps(about.get('license', ''))}
-  summary: {json.dumps(about.get('summary', ''))}
+about:{about_block}
   license_file:{lic_files}
 
 extra:{extra_yaml}
@@ -195,10 +202,22 @@ def main() -> None:
 
     (args.out / "recipe.yaml").write_text(text)
     (args.out / "torch_repack.py").write_bytes(tool_src)
+    # The license gate substitutes canonical SPDX texts for wheels that
+    # declare a license but ship no copy, and it resolves them next to
+    # torch_repack.py -- so the recipe dir needs them beside the snapshot or
+    # the gate fails inside the build (measured on triton, MIT).
+    lic_dir = args.out / "licenses"
+    lic_dir.mkdir(exist_ok=True)
+    for src in sorted((HERE / "licenses").glob("*.txt")):
+        shutil.copyfile(src, lic_dir / src.name)
+    emitted = meta_path.parent / "licenses"
     for name in sorted(meta["licenses"]):
-        src = prefix / "share" / "licenses" / meta["index"]["name"] / name
-        if src.is_file():
-            shutil.copyfile(src, args.out / name)
+        src = emitted / name
+        if not src.is_file():
+            sys.exit(f"license {name} was not emitted beside {meta_path}: "
+                     f"about.license_file would name a file the recipe dir "
+                     f"does not have, and the build fails at packaging time")
+        shutil.copyfile(src, args.out / name)
     tr.log(f"side recipe -> {args.out / 'recipe.yaml'}")
 
 

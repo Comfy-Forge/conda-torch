@@ -293,6 +293,14 @@ def main() -> None:
 
     (args.out / "recipe.yaml").write_text(text)
     (args.out / "torch_repack.py").write_bytes(tool_src)
+    # The license gate substitutes canonical SPDX texts for wheels that
+    # declare a license but ship no copy, and it resolves them next to
+    # torch_repack.py -- so the recipe dir needs them beside the snapshot or
+    # the gate fails inside the build (measured on triton, MIT).
+    lic_dir = args.out / "licenses"
+    lic_dir.mkdir(exist_ok=True)
+    for src in sorted((HERE / "licenses").glob("*.txt")):
+        shutil.copyfile(src, lic_dir / src.name)
     # info/licenses/ comes from about.license_file, which resolves against the
     # recipe directory -- so the wheel's license blobs are laid down beside it.
     for flat, blob in sorted(tr.wheel_license_files(wheel).items()):

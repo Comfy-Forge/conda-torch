@@ -1806,6 +1806,14 @@ def side_emit(stage: Path, outdir: Path, index: dict, about: dict,
     if SIDE_META is not None:
         SIDE_META.write_text(json.dumps(
             {"index": index, "about": about, "licenses": sorted(lics)}, indent=2))
+        # emit_conda used to put these straight into info/licenses/. Under
+        # rattler-build they must reach the recipe dir instead, so about's
+        # license_file can pick them up -- and for a pywheel repack they exist
+        # nowhere on disk, only in this dict.
+        licdir = SIDE_META.parent / "licenses"
+        licdir.mkdir(parents=True, exist_ok=True)
+        for flat, blob in sorted(lics.items()):
+            (licdir / flat).write_bytes(blob)
     log(f"side artifact staged into {SIDE_STAGE}; rattler-build will package it")
     return None
 
