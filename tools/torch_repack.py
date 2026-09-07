@@ -52,6 +52,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import time
 import urllib.request
@@ -2320,6 +2321,13 @@ def main() -> None:
     if f"{sys.version_info.major}.{sys.version_info.minor}" != args.py:
         sys.exit(f"must run under python {args.py} for .pyc magic "
                  f"(running {sys.version_info.major}.{sys.version_info.minor})")
+    if sysconfig.get_config_var("Py_GIL_DISABLED"):
+        # The grid excludes freethreaded (t) ABIs, and a free-threaded build
+        # stamps different .pyc magic. Nothing pins the ABI in the recipe --
+        # conda-forge's track_features penalty is what keeps the solver off
+        # them -- so check rather than trust.
+        sys.exit("running under a free-threaded interpreter; the grid excludes "
+                 "freethreaded ABIs and their .pyc magic differs")
 
     if args.side_kind is not None:
         if args.stage_prefix is None:

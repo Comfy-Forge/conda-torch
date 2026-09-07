@@ -131,7 +131,7 @@ jobs:
               rattler-build build \
                 --recipe "side_recipe_$i/recipe.yaml" \
                 --target-platform "$IN_PLATFORM" \
-                --output-dir out -c conda-forge --no-build-id
+                --output-dir out -c conda-forge -c conda-forge/label/python_rc --no-build-id
             fi
           done
           # The libtorch half is shared across every shim of a cell, so on a
@@ -152,7 +152,7 @@ jobs:
             rattler-build build \
               --recipe recipe/recipe.yaml \
               --target-platform "$IN_PLATFORM" \
-              --output-dir out -c conda-forge --no-build-id
+              --output-dir out -c conda-forge -c conda-forge/label/python_rc --no-build-id
           else
             echo "both halves already published; nothing to build"
           fi

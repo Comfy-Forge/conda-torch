@@ -35,6 +35,21 @@ sys.path.insert(0, str(HERE))
 import torch_repack as tr  # noqa: E402  (path set above)
 
 
+def py_spec(py: str) -> str:
+    """Interpreter spec for the BUILD platform.
+
+    `python 3.15.*` does not match 3.15.0rc2, and until a python lands
+    conda-forge ships only release candidates -- so every py3.15 cell failed
+    to resolve. .pyc magic is frozen at RC, which is the only property we need
+    from the interpreter here, so spelling the floor as an rc admits the RC
+    without loosening anything else. The old pipeline got this for free from
+    setup-python's allow-prereleases; moving the interpreter into the build
+    environment is what made it explicit.
+    """
+    major, minor = py.split(".")
+    return f"python >={py}.0rc0,<{major}.{int(minor) + 1}.0a0"
+
+
 def wheel_tags(req: dict) -> list[str]:
     """The filename fragments that pick this request's wheel -- mirrors the
     tag list each builder passes to side_wheel()."""
@@ -108,7 +123,7 @@ build:
 
 requirements:
   build:
-    - python {req.get('py', '3.12')}.*
+    - {py_spec(req.get('py', '3.12'))}
     - zstandard
     - patchelf
   run:{dep_list(index.get('depends', []), 4)}
