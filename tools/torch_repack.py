@@ -1744,17 +1744,71 @@ def pypi_wheel_url(pypi_name: str, version: str, want: list[str]) -> tuple[str, 
              f"(have: {[f['filename'] for f in wheels]})")
 
 
+# Side artifacts (nvshmem, cudnn, triton) are SHARED across many torch cells
+# and immutable at SIDE_BUILD, and each is repacked from a DIFFERENT upstream
+# wheel than the torch recipe declares in `source:`. Folding them in as extra
+# outputs would make that sha256 stop meaning "the verified source of this
+# artifact", and would rebuild a shared, already-published asset on every cell.
+# So they get their own recipe (render_side_recipe.py): in torch stage mode we
+# only RECORD what a cell needs, and the driver renders/builds those separately.
+SIDE_REQUESTS: list[dict] = []
+STAGE_MODE = False               # torch stage mode: record, never build
+SIDE_STAGE: Path | None = None   # side stage mode: this builder owns $PREFIX
+SIDE_META: Path | None = None
+SIDE_WHEEL: Path | None = None   # rattler-build's own verified `source:` download
+
+
+def side_wheel(pypi_name: str, version: str, tags: list[str], work: Path) -> Path:
+    """The wheel to repack. Under rattler-build this is the archive it already
+    downloaded and checked against the recipe's sha256, so we neither fetch it
+    twice nor re-verify it ourselves -- that check is now structural."""
+    if SIDE_WHEEL is not None:
+        return SIDE_WHEEL
+    url, whl_sha = pypi_wheel_url(pypi_name, version, tags)
+    wheel = work / url.rsplit("/", 1)[1]
+    download(url, wheel, whl_sha)
+    return wheel
+
+
+def side_emit(stage: Path, outdir: Path, index: dict, about: dict,
+              lics: dict) -> Path | None:
+    """Hand-assemble the .conda (legacy path) or, under rattler-build, move
+    the staged tree into $PREFIX and hand the computed metadata to the
+    renderer."""
+    if SIDE_STAGE is None:
+        return emit_conda(stage, outdir, index, about, {}, licenses=lics)
+    for src in sorted(stage.rglob("*")):
+        if not src.exists() and not src.is_symlink():
+            continue                      # parent already moved as a symlink
+        dst = SIDE_STAGE / src.relative_to(stage)
+        if src.is_symlink() or src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+        elif src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+    if SIDE_META is not None:
+        SIDE_META.write_text(json.dumps(
+            {"index": index, "about": about, "licenses": sorted(lics)}, indent=2))
+    log(f"side artifact staged into {SIDE_STAGE}; rattler-build will package it")
+    return None
+
+
 def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
                   outdir: Path, work: Path, build_number: int) -> tuple[str, Path | None]:
     """Repack nvidia-nvshmem-cuNN from PyPI into $PREFIX/lib.
 
     Returns (conda dep string, built .conda path).
     """
+    if STAGE_MODE:
+        SIDE_REQUESTS.append({"kind": "nvshmem", "pypi_name": pypi_name,
+                              "version": pin_version, "py": py, "subdir": subdir})
+        log(f"side artifact needed: nvshmem {SIDE_REQUESTS[-1]['pypi_name']} "
+                f"{SIDE_REQUESTS[-1]['version']} -- recorded; its own recipe builds it")
+        major = int(pin_version.split(".")[0])
+        return f"nvidia-nvshmem >={pin_version},<{major + 1}", None
     fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))  # 12 or 13
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url, whl_sha = pypi_wheel_url(pypi_name, pin_version, [plat])
-    wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel, whl_sha)
+    wheel = side_wheel(pypi_name, pin_version, [plat], work)
     lics = license_gate(wheel, "nvidia-nvshmem")
 
     stage = work / "nvshmem_stage"
@@ -1826,7 +1880,7 @@ def build_nvshmem(pypi_name: str, pin_version: str, subdir: str, py: str,
              "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
                        "wheel_hash_source": "pypi-api",
                        "dropped_optional_plugins": dropped}}
-    out = emit_conda(stage, outdir, index, about, {}, licenses=lics)
+    out = side_emit(stage, outdir, index, about, lics)
     dep = f"nvidia-nvshmem >={pin_version},<{int(pin_version.split('.')[0]) + 1}"
     return dep, out
 
@@ -1844,12 +1898,17 @@ def build_nvidia_lib(pypi_name: str, pin: str, subdir: str,
     artifact is shared across entries and immutable once published
     (emit_conda's skip-published check reuses it); SIDE_BUILD bumps it
     when the pipeline itself changes."""
+    if STAGE_MODE:
+        SIDE_REQUESTS.append({"kind": "nvidia-lib", "pypi_name": pypi_name,
+                              "version": pin, "subdir": subdir,
+                              "conda_name": conda_name})
+        log(f"side artifact needed: nvidia-lib {SIDE_REQUESTS[-1]['pypi_name']} "
+                f"{SIDE_REQUESTS[-1]['version']} -- recorded; its own recipe builds it")
+        return
     comp = re.sub(r"-cu\d+$", "", pypi_name)[len("nvidia-"):]
     fam = int(re.search(r"-cu(\d+)$", pypi_name).group(1))
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url, whl_sha = pypi_wheel_url(pypi_name, pin, [plat])
-    wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel, whl_sha)
+    wheel = side_wheel(pypi_name, pin, [plat], work)
     lics = license_gate(wheel, conda_name)
 
     stage = work / f"nvlib_{comp}"
@@ -1904,7 +1963,7 @@ def build_nvidia_lib(pypi_name: str, pin: str, subdir: str,
                         "(no conda-forge build fits the entry's cuda-version window)",
              "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
                        "wheel_hash_source": "pypi-api"}}
-    emit_conda(stage, outdir, index, about, {}, licenses=lics)
+    side_emit(stage, outdir, index, about, lics)
 
 
 def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
@@ -1914,6 +1973,12 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
     3.0.0 and 3.8.x have no conda-forge build at all. Same dist-info
     contract as pytorch. Console scripts are NOT generated (recorded in
     about.json; torch never shells out to them)."""
+    if STAGE_MODE:
+        SIDE_REQUESTS.append({"kind": "pywheel", "pypi_name": pypi_name,
+                              "version": version, "py": py, "subdir": subdir})
+        log(f"side artifact needed: pywheel {SIDE_REQUESTS[-1]['pypi_name']} "
+                f"{SIDE_REQUESTS[-1]['version']} -- recorded; its own recipe builds it")
+        return
     pytag = "py" + py.replace(".", "")
     hsh = hashlib.sha256(f"{pypi_name}|{version}|{py}".encode()).hexdigest()[:8]
     stem = f"{pypi_name}-{version}-repack_{pytag}_h{hsh}_{build_number}"
@@ -1933,9 +1998,7 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
 
     cp = "cp" + py.replace(".", "")
     plat = "aarch64" if subdir == "linux-aarch64" else "x86_64"
-    url, whl_sha = pypi_wheel_url(pypi_name, version, [f"-{cp}-", plat])
-    wheel = work / url.rsplit("/", 1)[1]
-    download(url, wheel, whl_sha)
+    wheel = side_wheel(pypi_name, version, [f"-{cp}-", plat], work)
     lics = license_gate(wheel, pypi_name)
 
     stage = work / f"side_{pypi_name}"
@@ -2003,8 +2066,7 @@ def side_repack_pywheel(pypi_name: str, version: str, py: str, subdir: str,
              "extra": {"repacked_from": wheel.name, "wheel_sha256": sha256_file(wheel),
                        "wheel_hash_source": "pypi-api",
                        "skipped_entry_points": entry_points}}
-    emit_conda(stage, outdir, index, about, {}, licenses=lics,
-               run_exports=None)
+    side_emit(stage, outdir, index, about, lics)
 
 
 # --------------------------------------------------------------------------
@@ -2186,6 +2248,19 @@ def main() -> None:
     ap.add_argument("--skip-published", action="store_true",
                     help="skip building artifacts already on the release "
                          "(shared libtorch/nvshmem/triton across cells)")
+    ap.add_argument("--side-kind", choices=["nvshmem", "nvidia-lib", "pywheel"],
+                    default=None,
+                    help="build ONE shared side artifact into --stage-prefix "
+                         "instead of the torch pair. Side artifacts get their "
+                         "own recipe because each is repacked from a different "
+                         "upstream wheel than the torch recipe declares.")
+    ap.add_argument("--side-name", default=None, help="its PyPI name")
+    ap.add_argument("--side-version", default=None, help="its pinned version")
+    ap.add_argument("--side-wheel", type=Path, default=None,
+                    help="use this already-downloaded wheel (rattler-build's "
+                         "verified $SRC_DIR copy) instead of fetching it")
+    ap.add_argument("--side-conda-name", default=None,
+                    help="conda name for --side-kind nvidia-lib (e.g. libcudnn)")
     ap.add_argument("--self-sha256", default=None,
                     help="sha256 the caller expects THIS file to have. The "
                          "recipe dir holds a snapshot of this script that "
@@ -2213,9 +2288,33 @@ def main() -> None:
     global SIDE_BUILD
     SIDE_BUILD = args.side_build_number
 
+    global STAGE_MODE
+    # torch stage mode only: in side mode the builder must actually build.
+    STAGE_MODE = args.stage_prefix is not None and args.side_kind is None
+
     if f"{sys.version_info.major}.{sys.version_info.minor}" != args.py:
         sys.exit(f"must run under python {args.py} for .pyc magic "
                  f"(running {sys.version_info.major}.{sys.version_info.minor})")
+
+    if args.side_kind is not None:
+        if args.stage_prefix is None:
+            sys.exit("--side-kind requires --stage-prefix")
+        global SIDE_STAGE, SIDE_META, SIDE_WHEEL
+        SIDE_WHEEL = args.side_wheel
+        SIDE_STAGE = args.stage_prefix
+        SIDE_STAGE.mkdir(parents=True, exist_ok=True)
+        SIDE_META = args.emit_metadata
+        args.work.mkdir(parents=True, exist_ok=True)
+        if args.side_kind == "nvshmem":
+            build_nvshmem(args.side_name, args.side_version, args.subdir,
+                          args.py, args.outdir, args.work, SIDE_BUILD)
+        elif args.side_kind == "nvidia-lib":
+            build_nvidia_lib(args.side_name, args.side_version, args.subdir,
+                             args.outdir, args.work, args.side_conda_name)
+        else:
+            side_repack_pywheel(args.side_name, args.side_version, args.py,
+                                args.subdir, args.outdir, args.work, SIDE_BUILD)
+        return
     is_linux = args.subdir.startswith("linux")
     if is_linux and shutil.which("patchelf") is None:
         sys.exit("patchelf not on PATH")
@@ -2473,6 +2572,7 @@ def main() -> None:
                         "run_exports": pt_rex, "prefix_files": prefix_files},
             "licenses": sorted(torch_licenses),
             "lt_owned": sorted(set(LT_OWNED)),
+            "side_requests": SIDE_REQUESTS,
         }, indent=2, sort_keys=True))
         log(f"metadata -> {args.emit_metadata}")
 
