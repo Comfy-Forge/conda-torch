@@ -42,6 +42,11 @@
   "wheel_hash_source": "index",
   "wheel_sha256": "c0508e2ff64722b2f1fc51c62f3c745efef66f8b04378aac3e4f2435ed320542"
  },
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.11.0,<2.12.0a0"
+  ]
+ },
  "sha256": "c40da15489116869be0230d41ce5f0b2268a688ed8ea69284b1f2bbf215c80da",
  "size": 547925876,
  "subdir": "linux-aarch64",

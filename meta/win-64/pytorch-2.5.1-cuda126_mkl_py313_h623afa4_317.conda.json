@@ -50,6 +50,12 @@
  "md5": "8811b36ebf9fc1cc99a7439cdbe0d319",
  "mirrored_from": "conda-forge",
  "name": "pytorch",
+ "run_exports": {
+  "weak": [
+   "pytorch >=2.5.1,<2.6.0a0",
+   "libtorch >=2.5.1,<2.6.0a0"
+  ]
+ },
  "sha256": "85f307ccc8f45e6551d81675bb80c5d4bd30cb0ecbbd854e6e2d3220a7ead6ea",
  "size": 25702352,
  "subdir": "win-64",

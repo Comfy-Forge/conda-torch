@@ -34,6 +34,11 @@
  "md5": "1c5f4fea6330dfce04758ece2c88d919",
  "name": "libtorch",
  "platform": "linux",
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.13.0,<2.14.0a0"
+  ]
+ },
  "sha256": "93b3c2959f4e51c773e8d353061b5567d0c912c897416ca4806ef467bee092e4",
  "size": 385013319,
  "subdir": "linux-aarch64",

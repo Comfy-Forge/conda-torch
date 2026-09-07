@@ -40,6 +40,11 @@
   "wheel_hash_source": "index+grid",
   "wheel_sha256": "719845d0ac5291344471c36c6b729838300cc7d4d6a1b175ca3b94e25930976b"
  },
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.12.1,<2.13.0a0"
+  ]
+ },
  "sha256": "272693da2aaf5d4366d9571b057a726cd1553b2bcde1c6ad8ef7b0c5e1a214c3",
  "size": 398262350,
  "subdir": "linux-64",

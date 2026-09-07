@@ -25,8 +25,8 @@ import zipfile
 from pathlib import Path
 
 
-def read_index_json(conda_path: Path) -> tuple[dict, dict]:
-    """(index.json, about.json-or-{}) from the artifact."""
+def read_index_json(conda_path: Path) -> tuple[dict, dict, dict]:
+    """(index.json, about.json-or-{}, run_exports.json-or-{}) from the artifact."""
     with zipfile.ZipFile(conda_path) as zf:
         info_names = [n for n in zf.namelist() if n.startswith("info-") and n.endswith(".tar.zst")]
         if len(info_names) != 1:
@@ -38,14 +38,18 @@ def read_index_json(conda_path: Path) -> tuple[dict, dict]:
         if member is None:
             sys.exit(f"{conda_path.name}: info/index.json missing")
         index = json.load(member)
-        about = {}
-        try:
-            am = tf.extractfile("info/about.json")
-            if am is not None:
-                about = json.load(am)
-        except KeyError:
-            pass
-        return index, about
+
+        def optional(name: str) -> dict:
+            try:
+                m = tf.extractfile(name)
+                return json.load(m) if m is not None else {}
+            except KeyError:
+                return {}
+
+        # run_exports travels in the fragment so the channel can publish a
+        # run_exports.json index: a builder resolving host deps reads the
+        # channel index, never the artifacts.
+        return index, optional("info/about.json"), optional("info/run_exports.json")
 
 
 # repacked package name -> PyPI purl base. Makes repacks visible to the
@@ -82,7 +86,7 @@ def main() -> None:
     ap.add_argument("--meta-dir", type=Path, default=Path("meta"))
     args = ap.parse_args()
 
-    index, about = read_index_json(args.conda_file)
+    index, about, run_exports = read_index_json(args.conda_file)
     if index.get("subdir", args.subdir) != args.subdir:
         sys.exit(f"index.json says subdir={index['subdir']!r} but you passed {args.subdir!r}")
     if "+" in str(index.get("version", "")):
@@ -94,6 +98,8 @@ def main() -> None:
     entry.update({"sha256": sha256, "md5": md5, "size": size, "subdir": args.subdir})
     if "repack" in str(index.get("build", "")) and index.get("name") in PURL_BASE:
         entry["purls"] = [f"{PURL_BASE[index['name']]}@{index['version']}"]
+    if run_exports:
+        entry["run_exports"] = run_exports
     prov = {k: v for k, v in (about.get("extra") or {}).items()
             if k in ("run_id", "run_url", "source_commit", "wheel_sha256",
                      "wheel_hash_source")}

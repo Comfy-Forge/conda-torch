@@ -25,6 +25,12 @@
  "md5": "f26f3a361dbe4764da8a90c5d4fe54c3",
  "name": "pytorch",
  "platform": "linux",
+ "run_exports": {
+  "weak": [
+   "pytorch >=2.12.1,<2.13.0a0",
+   "libtorch >=2.12.1,<2.13.0a0"
+  ]
+ },
  "sha256": "5c7eee5b93b3f9fab671697684275430e543385e2b3e4101b7d28971ec2c831d",
  "size": 28103301,
  "subdir": "linux-64",

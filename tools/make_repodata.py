@@ -12,7 +12,11 @@ repodata keys per exact .conda filename. Fragments on disk stay untouched
 A patch naming a filename with no fragment is a hard error, so a typo
 cannot silently no-op.
 
-Also emits repodata.json.zst (zstd -19) beside each repodata.json.
+Also emits, per subdir: repodata.json.zst, and run_exports.json(.zst) —
+the index a builder consults when resolving host dependencies (it reads
+the channel index, never the artifacts). Its data comes from each
+fragment's `run_exports` key, which fragment.py lifts out of the
+artifact's info/run_exports.json.
 
 Usage: make_repodata.py [--meta-dir meta] [--site-dir site] [--patches-dir patches]
 """
@@ -32,6 +36,16 @@ ALWAYS_SUBDIRS = {"noarch", "linux-64", "linux-aarch64", "win-64", "osx-arm64", 
 # forces a full artifact republish (a review found the original set too
 # narrow for exactly that case).
 PATCHABLE_KEYS = {"depends", "constrains", "purls", "run_exports", "license", "license_family"}
+
+
+def write_json(path: Path, payload: dict) -> None:
+    """Write an index and its zstd sibling (clients prefer the .zst)."""
+    body = json.dumps(payload, indent=1, sort_keys=True) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    zst = subprocess.run(["zstd", "-19", "--stdout"], input=body.encode(),
+                         capture_output=True, check=True).stdout
+    path.with_suffix(path.suffix + ".zst").write_bytes(zst)
 
 
 def load_patches(patches_dir: Path, subdir: str, packages_conda: dict) -> int:
@@ -68,6 +82,13 @@ def main() -> None:
             filename = frag.name[: -len(".json")]
             packages_conda[filename] = json.loads(frag.read_text())
         patched = load_patches(args.patches_dir, subdir, packages_conda)
+
+        # run_exports lives in the fragments (and is patchable), but ships in
+        # its OWN index, not in repodata entries — that is where a builder
+        # resolving host deps looks, and it keeps repodata.json standard.
+        run_exports = {fn: {"run_exports": entry.pop("run_exports", None) or {}}
+                       for fn, entry in packages_conda.items()}
+
         repodata = {
             "info": {"subdir": subdir, "base_url": f"{RELEASES}/{subdir}/"},
             "packages": {},
@@ -76,16 +97,17 @@ def main() -> None:
         }
         out = args.site_dir / subdir / "repodata.json"
         out.parent.mkdir(parents=True, exist_ok=True)
-        body = json.dumps(repodata, indent=1, sort_keys=True) + "\n"
-        out.write_text(body)
-        zst = subprocess.run(["zstd", "-19", "--stdout"], input=body.encode(),
-                             capture_output=True, check=True).stdout
-        (args.site_dir / subdir / "repodata.json.zst").write_bytes(zst)
-        summary.append((subdir, len(packages_conda), patched))
+        write_json(out, repodata)
+        write_json(args.site_dir / subdir / "run_exports.json",
+                   {"info": {"subdir": subdir, "version": 1},
+                    "packages": {}, "packages.conda": run_exports})
+        n_rex = sum(1 for v in run_exports.values() if v["run_exports"])
+        summary.append((subdir, len(packages_conda), patched, n_rex))
 
     lines = "".join(
-        f"<tr><td>{s}</td><td>{n}</td><td><a href='{s}/repodata.json'>repodata.json</a></td></tr>"
-        for s, n, _ in summary
+        f"<tr><td>{s}</td><td>{n}</td><td><a href='{s}/repodata.json'>repodata.json</a></td>"
+        f"<td><a href='{s}/run_exports.json'>run_exports.json</a></td></tr>"
+        for s, n, _, _ in summary
     )
     (args.site_dir / "index.html").write_text(
         "<!doctype html><meta charset=utf-8><title>comfy-forge conda channel</title>"
@@ -93,10 +115,11 @@ def main() -> None:
         "td{padding:.3em 1em;border-bottom:1px solid #ccc}</style>"
         f"<h1>comfy-forge conda channel</h1><p>Add <code>{CHANNEL}</code> as a conda channel. "
         "Packages are served as GitHub release assets via CEP-15 <code>base_url</code>.</p>"
-        f"<table><tr><th>subdir</th><th>packages</th><th></th></tr>{lines}</table>"
+        f"<table><tr><th>subdir</th><th>packages</th><th></th><th></th></tr>{lines}</table>"
     )
-    for s, n, p in summary:
-        print(f"{s}: {n} packages" + (f" ({p} patched)" if p else ""))
+    for s, n, p, r in summary:
+        print(f"{s}: {n} packages" + (f" ({p} patched)" if p else "")
+              + (f", {r} with run_exports" if r else ""))
 
 
 if __name__ == "__main__":

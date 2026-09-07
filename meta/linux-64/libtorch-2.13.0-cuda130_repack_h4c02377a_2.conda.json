@@ -41,6 +41,11 @@
   "wheel_hash_source": "TOFU",
   "wheel_sha256": "38fba3d5e731d7c8916f90b2ae3bd972ca1790db02970b9eb0940743cda5bc96"
  },
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.13.0,<2.14.0a0"
+  ]
+ },
  "sha256": "006005a1c4e11c8a0ef119e495e27c009b782bf9d622e3a96d4d0fa6aa321704",
  "size": 401564531,
  "subdir": "linux-64",

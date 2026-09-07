@@ -32,6 +32,12 @@
  "purls": [
   "pkg:pypi/torch@2.5.1"
  ],
+ "run_exports": {
+  "weak": [
+   "pytorch >=2.5.1,<2.6.0a0",
+   "libtorch >=2.5.1,<2.6.0a0"
+  ]
+ },
  "sha256": "b1b65c29386014505c10eeff777e45dc1a4454fc41352f879589bb1f9a245708",
  "size": 21893393,
  "subdir": "linux-64",

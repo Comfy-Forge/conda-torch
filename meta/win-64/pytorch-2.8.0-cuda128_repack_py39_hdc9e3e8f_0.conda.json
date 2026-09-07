@@ -23,6 +23,12 @@
  "md5": "b58f2f9d3e85da1843bb1e8ae1f8bda6",
  "name": "pytorch",
  "platform": "win",
+ "run_exports": {
+  "weak": [
+   "pytorch >=2.8.0,<2.9.0a0",
+   "libtorch >=2.8.0,<2.9.0a0"
+  ]
+ },
  "sha256": "2e46bef96032a226f743a520fb3646059bcc84c41f2560c7f13615ce8faeee8d",
  "size": 18593977,
  "subdir": "win-64",

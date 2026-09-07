@@ -28,6 +28,11 @@
  "md5": "9e3c07e6c3628a931b652e94328486a0",
  "name": "libtorch",
  "platform": "win",
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.8.0,<2.9.0a0"
+  ]
+ },
  "sha256": "407f0a7567a4503e1cbf274a1ef6a14b3adf852f104d39b1f05f528d1da59f94",
  "size": 486245445,
  "subdir": "win-64",
