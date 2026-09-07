@@ -512,6 +512,13 @@ _GLIBCXX_GCC = {
 # scan and the RPATH scrub work from that list, never from a directory walk.
 STAGED_ELFS: dict[str, list[Path]] = {"libtorch": [], "pytorch": []}
 WHEEL_TOPLEVEL: list[str] = []
+# Paths (prefix-relative globs) the surgery assigns to the libtorch half.
+# The two outputs partition one $PREFIX, and the partition is NOT a simple
+# prefix split: on win-64 nothing is relocated, so libtorch owns files at
+# their wheel paths interleaved inside Lib/site-packages/torch/. Recording
+# ownership where the move happens keeps the recipe's files: lists derived
+# from what the split actually did, instead of globs guessed per platform.
+LT_OWNED: list[str] = []
 
 
 def elf_floors(roots: list[Path]) -> tuple[str | None, int | None]:
@@ -1366,11 +1373,17 @@ def win_launcher_stub() -> bytes:
         return zf.read("setuptools/cli-64.exe")
 
 
-def win_launcher_pair(scripts: Path, prefix_files: dict[str, str]) -> None:
+def win_launcher_pair(scripts: Path, prefix_files: dict[str, str],
+                      stage_prefix: Path | None = None) -> None:
     scripts.mkdir(parents=True, exist_ok=True)
     (scripts / "torchrun.exe").write_bytes(win_launcher_stub())
+    # As on POSIX: rattler-build registers a placeholder only for files that
+    # contain the real build prefix, so in stage mode the shebang must carry
+    # it. Writing our synthetic placeholder would ship a launcher script
+    # pinned to a path that never existed.
+    root = str(stage_prefix) if stage_prefix is not None else PLACEHOLDER
     (scripts / "torchrun-script.py").write_text(
-        "#!" + PLACEHOLDER + "/python.exe\n" + WIN_MAIN.decode())
+        "#!" + root + "/python.exe\n" + WIN_MAIN.decode())
     prefix_files["Scripts/torchrun-script.py"] = "text"
 
 
@@ -1510,9 +1523,11 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str,
     for so in big:
         shutil.move(tlib / so, lt_stage / "lib" / so)
         make_symlink(tlib / so, f"../../../../{so}")
+        LT_OWNED.append(f"lib/{so}")
     for so in vendored:
         shutil.move(tlib / so, lt_stage / "lib" / VENDOR_DIR / so)
         make_symlink(tlib / so, f"../../../../{VENDOR_DIR}/{so}")
+        LT_OWNED.append(f"lib/{VENDOR_DIR}/{so}")
     gomp = list(tlib.glob("libgomp*"))
     if gomp:
         for g in gomp:
@@ -1613,13 +1628,17 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
     for entry in sorted(tinc.iterdir()):
         if entry.name not in TORCH_OWN_HEADERS:
             continue  # third-party trees stay real in-package (clobber hazard)
-        shutil.move(entry, lt_stage / "include" / entry.name)
+        dest = lt_stage / "include" / entry.name
+        shutil.move(entry, dest)
         make_symlink(tinc / entry.name, f"{up}include/{entry.name}")
+        LT_OWNED.append(f"include/{entry.name}/**" if dest.is_dir()
+                        else f"include/{entry.name}")
 
     tcmake = sp / "torch" / "share" / "cmake"
     sed_cmake(tcmake)
     (lt_stage / "share").mkdir(exist_ok=True)
     shutil.move(tcmake, lt_stage / "share" / "cmake")
+    LT_OWNED.append("share/cmake/**")
     # link lives at torch/share/cmake, resolved from torch/share: 5 ups to $PREFIX
     make_symlink(tcmake, f"{up}share/cmake")
 
@@ -1628,7 +1647,8 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
     # must NOT go to $PREFIX/bin (it would clobber libprotobuf's).
 
 
-def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> tuple[dict[str, str], set[str], list[str]]:
+def split_win64(sp: Path, pt_stage: Path, lt_stage: Path,
+                stage_prefix: Path | None = None) -> tuple[dict[str, str], set[str], list[str]]:
     """Windows: no relocation at all. Lib/site-packages is python-version-
     independent, so libtorch owns the big python-independent files AT
     their wheel paths under torch/, and pytorch owns the rest. Strips:
@@ -1676,6 +1696,7 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> tuple[dict[str, str
         rel = f"{sproot}/torch/lib/{p.name}"
         (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.move(p, lt_stage / rel)
+        LT_OWNED.append(rel)
     tinc = sp / "torch" / "include"
     for entry in sorted(tinc.iterdir()):
         if entry.name == "pybind11":
@@ -1683,13 +1704,15 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path) -> tuple[dict[str, str
         rel = f"{sproot}/torch/include/{entry.name}"
         (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.move(entry, lt_stage / rel)
+        LT_OWNED.append(rel + "/**" if (lt_stage / rel).is_dir() else rel)
     rel = f"{sproot}/torch/share/cmake"
     (lt_stage / rel).parent.mkdir(parents=True, exist_ok=True)
     shutil.move(sp / "torch" / "share" / "cmake", lt_stage / rel)
+    LT_OWNED.append(rel + "/**")
 
     # entry point: launcher + registered text script (see WIN_MAIN comment)
     prefix_files: dict[str, str] = {}
-    win_launcher_pair(pt_stage / "Scripts", prefix_files)
+    win_launcher_pair(pt_stage / "Scripts", prefix_files, stage_prefix)
     return prefix_files, imports, stripped_dll
 
 
@@ -2163,6 +2186,12 @@ def main() -> None:
     ap.add_argument("--skip-published", action="store_true",
                     help="skip building artifacts already on the release "
                          "(shared libtorch/nvshmem/triton across cells)")
+    ap.add_argument("--self-sha256", default=None,
+                    help="sha256 the caller expects THIS file to have. The "
+                         "recipe dir holds a snapshot of this script that "
+                         "rattler-build does not fold into its staging-cache "
+                         "key, so a stale snapshot would otherwise be packaged "
+                         "silently; this makes that fail closed.")
     ap.add_argument("--stage-prefix", type=Path, default=None,
                     help="rattler-build mode: run the surgery into this single "
                          "prefix (both halves; the shim symlinks already point "
@@ -2171,6 +2200,13 @@ def main() -> None:
                     help="write the computed index/about/run_exports/prefix_files "
                          "for both outputs as JSON (recipe generation reads it)")
     args = ap.parse_args()
+
+    if args.self_sha256 is not None:
+        got = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        if got != args.self_sha256:
+            sys.exit(f"torch_repack.py is {got}, caller expected "
+                     f"{args.self_sha256}: the recipe snapshot is stale. "
+                     f"Re-run render_recipe.py.")
     if args.skip_published:
         global SKIP_PUBLISHED
         SKIP_PUBLISHED = True
@@ -2279,7 +2315,8 @@ def main() -> None:
                 side_repack_pywheel(name, floor, args.py, args.subdir,
                                     args.outdir, args.work, SIDE_BUILD)
     else:
-        prefix_files, win_imports, win_stripped = split_win64(sp, pt_stage, lt_stage)
+        prefix_files, win_imports, win_stripped = split_win64(
+            sp, pt_stage, lt_stage, args.stage_prefix)
 
     # ---- entry point (POSIX; win handled inside split_win64) ---------------
     if is_linux:
@@ -2391,6 +2428,7 @@ def main() -> None:
     lt_about["extra"] = {**about["extra"], "vendored": vendored_sbom(lt_stage, is_linux)}
 
     # licenses ride the libtorch payload too (its stage has no dist-info)
+    LT_OWNED.append("share/licenses/libtorch/**")
     lt_licdir = lt_stage / "share" / "licenses" / "libtorch"
     lt_licdir.mkdir(parents=True, exist_ok=True)
     for flat, blob in sorted(torch_licenses.items()):
@@ -2398,6 +2436,7 @@ def main() -> None:
 
     # conda-forge parity: the libtorch output exports CF_TORCH_CUDA_ARCH_LIST
     # on activation so their torchvision/torchaudio recipes build against us
+    LT_OWNED.append("etc/conda/**")
     arch_list = install_activation(lt_stage, args.subdir)
     lt_about["extra"]["cuda_arch_list"] = arch_list
 
@@ -2413,6 +2452,7 @@ def main() -> None:
         # binaries that package does not ship. Put it in libtorch's payload
         # instead -- it lands only where it is true, and a security team can
         # read it without parsing conda metadata.
+        LT_OWNED.append("share/libtorch/**")
         sbom_dir = lt_stage / "share" / "libtorch"
         sbom_dir.mkdir(parents=True, exist_ok=True)
         (sbom_dir / "vendored-sbom.json").write_text(json.dumps({
@@ -2432,6 +2472,7 @@ def main() -> None:
             "pytorch": {"index": pt_index, "about": about,
                         "run_exports": pt_rex, "prefix_files": prefix_files},
             "licenses": sorted(torch_licenses),
+            "lt_owned": sorted(set(LT_OWNED)),
         }, indent=2, sort_keys=True))
         log(f"metadata -> {args.emit_metadata}")
 
