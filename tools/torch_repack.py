@@ -503,6 +503,17 @@ _GLIBCXX_GCC = {
 }
 
 
+# In --stage-prefix mode both halves are staged into rattler-build's $PREFIX,
+# which already contains the host environment (python, zstandard, their
+# libstdc++). Walking a stage root there sweeps in files this package does not
+# ship: it measured gcc=15 off conda-forge's libstdc++ where the wheel's own
+# binaries need 6, and it RPATH-patched host libraries that are not ours to
+# touch. So the surgery records exactly the ELFs it writes and both the floor
+# scan and the RPATH scrub work from that list, never from a directory walk.
+STAGED_ELFS: dict[str, list[Path]] = {"libtorch": [], "pytorch": []}
+WHEEL_TOPLEVEL: list[str] = []
+
+
 def elf_floors(roots: list[Path]) -> tuple[str | None, int | None]:
     """(max GLIBC_x.y, GCC major implied by max GLIBCXX) across every ELF
     under roots — measured from the binaries, never pasted. A pasted
@@ -511,7 +522,8 @@ def elf_floors(roots: list[Path]) -> tuple[str | None, int | None]:
     max_glibc: V | None = None
     max_cxx: str | None = None
     for root in roots:
-        for p in sorted(root.rglob("*")):
+        candidates = [root] if root.is_file() else sorted(root.rglob("*"))
+        for p in candidates:
             if p.is_symlink() or not p.is_file():
                 continue
             with open(p, "rb") as fh:
@@ -1257,19 +1269,27 @@ def scrub_site_elfs(pt_stage: Path, sp: Path) -> None:
     otherwise have PROMOTED from RUNPATH to RPATH)."""
     lib = pt_stage / "lib"
     n = 0
-    for p in sorted(sp.rglob("*")):
-        if p.is_symlink() or not p.is_file():
+    # only the trees this wheel unpacked: in --stage-prefix mode site-packages
+    # also holds the host env's own packages, which are not ours to rewrite.
+    roots = [sp / t for t in WHEEL_TOPLEVEL] if WHEEL_TOPLEVEL else [sp]
+    for root in roots:
+        if not root.exists():
             continue
-        with open(p, "rb") as fh:
-            if fh.read(4) != b"\x7fELF":
+        for p in sorted(root.rglob("*")):
+            if p.is_symlink() or not p.is_file():
                 continue
-        rel = os.path.relpath(lib, p.parent)
-        patch_rpath(p, f"$ORIGIN:$ORIGIN/{rel}")
-        n += 1
+            with open(p, "rb") as fh:
+                if fh.read(4) != b"\x7fELF":
+                    continue
+            rel = os.path.relpath(lib, p.parent)
+            patch_rpath(p, f"$ORIGIN:$ORIGIN/{rel}")
+            STAGED_ELFS["pytorch"].append(p)
+            n += 1
     log(f"scrubbed RPATHs on {n} site-packages ELFs")
 
 
 def extract_wheel(wheel: Path, sp: Path) -> None:
+    global WHEEL_TOPLEVEL
     log("extracting wheel (enumerating the zip namelist, never top_level.txt)...")
     zf = zipfile.ZipFile(wheel)
     for zi in zf.infolist():
@@ -1282,7 +1302,11 @@ def extract_wheel(wheel: Path, sp: Path) -> None:
         mode = (zi.external_attr >> 16) & 0o7777
         if mode:
             os.chmod(dest, mode)
+    # the wheel's own top-level entries, so later passes can confine
+    # themselves to what this wheel unpacked (see STAGED_ELFS)
+    WHEEL_TOPLEVEL[:] = sorted({n.split("/", 1)[0] for n in zf.namelist() if "/" in n})
     zf.close()
+    log(f"wheel top-level entries: {WHEEL_TOPLEVEL}")
 
 
 def scrub_dist_info(sp: Path) -> Path:
@@ -1516,9 +1540,12 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str,
     log("setting clean RPATHs (all big libs + vendored set, --force-rpath)...")
     for so in big:
         patch_rpath(lt_stage / "lib" / so, full)
+        STAGED_ELFS["libtorch"].append(lt_stage / "lib" / so)
     patch_rpath(pt_stage / "lib" / "libtorch_python.so", full)
+    STAGED_ELFS["pytorch"].append(pt_stage / "lib" / "libtorch_python.so")
     for so in vendored:
         patch_rpath(lt_stage / "lib" / VENDOR_DIR / so, "$ORIGIN:$ORIGIN/..")
+        STAGED_ELFS["libtorch"].append(lt_stage / "lib" / VENDOR_DIR / so)
     scrub_site_elfs(pt_stage, sp)
 
     # ---- sleef redirect (see SLEEF_* constants) ----------------------------
@@ -2296,7 +2323,9 @@ def main() -> None:
         _shim_needs_sleef = SLEEF_SONAME in subprocess.run(
             ["patchelf", "--print-needed", str(_shim)],
             capture_output=True, text=True, check=True).stdout.split()
-        lt_deps = cuda_deps(requires, flavour) + ["libgomp"] + floor_deps([lt_stage])
+        lt_scan = (STAGED_ELFS["libtorch"] if args.stage_prefix is not None
+                   else [lt_stage])
+        lt_deps = cuda_deps(requires, flavour) + ["libgomp"] + floor_deps(lt_scan)
         if _shim_needs_sleef:
             lt_deps.append(SLEEF_DEP)
         if args.subdir == "linux-aarch64":
@@ -2332,7 +2361,8 @@ def main() -> None:
         "numpy",
     ]
     if is_linux:
-        pt_deps += floor_deps([pt_stage])
+        pt_deps += floor_deps(STAGED_ELFS["pytorch"] if args.stage_prefix is not None
+                              else [pt_stage])
     # NOTE: no pytorch-cpu/pytorch-gpu constrains. The old
     # `pytorch-gpu <0.0a0` silently made every env using conda-forge's
     # common pytorch-gpu metapackage idiom resolve to mirrors only, never

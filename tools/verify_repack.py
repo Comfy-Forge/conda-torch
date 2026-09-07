@@ -63,6 +63,18 @@ def verify(conda_path: Path) -> None:
               "info/licenses/ present (license gate)")
         if name in ("libtorch", "pytorch"):
             check("info/run_exports.json" in infonames, "run_exports.json present")
+        # link.json is what tells conda to generate console scripts at install
+        # time, and it is required exactly for `noarch: python` packages --
+        # rattler-build emits it for those and (correctly) not for a
+        # platform-specific package like ours, which ships bin/torchrun as a
+        # real file with a prefix placeholder. Nothing here is noarch python
+        # today, so this gate is dormant; it exists so that the day something
+        # is, a missing link.json fails the build instead of silently shipping
+        # a package whose entry points never get created.
+        if index.get("noarch") == "python":
+            check("info/link.json" in infonames,
+                  "noarch: python package carries info/link.json "
+                  "(without it conda never creates its console scripts)")
     pset = {p["_path"] for p in paths["paths"]}
 
     with zstd_tar(z.read(pkg[0])) as tf:

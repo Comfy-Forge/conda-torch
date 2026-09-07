@@ -220,6 +220,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True, help="recipe directory")
     ap.add_argument("--work", type=Path, default=Path("render_work"))
     ap.add_argument("--wheel", type=Path, default=None)
+    ap.add_argument("--check", action="store_true",
+                    help="fail if the rendered recipe or its torch_repack.py "
+                         "snapshot differs from what is already in --out")
     args = ap.parse_args()
 
     args.work.mkdir(parents=True, exist_ok=True)
@@ -260,10 +263,30 @@ def main() -> None:
                     "--work", str(args.work / "surgery")], check=True)
 
     meta = json.loads(meta_path.read_text())
-    (args.out / "recipe.yaml").write_text(
-        render(meta, wheel_url=url.split("#")[0], wheel_sha=sha, subdir=args.subdir,
-               python=args.py, hash_source=hash_source))
-    shutil.copy2(HERE / "torch_repack.py", args.out / "torch_repack.py")
+    text = render(meta, wheel_url=url.split("#")[0], wheel_sha=sha,
+                  subdir=args.subdir, python=args.py, hash_source=hash_source)
+    tool_src = (HERE / "torch_repack.py").read_bytes()
+
+    if args.check:
+        # The recipe dir carries a SNAPSHOT of torch_repack.py, so editing the
+        # tool without re-rendering silently builds stale code -- it already
+        # cost one confusing debug cycle. CI runs this so it cannot reach a
+        # fleet wave.
+        drift = []
+        cur = args.out / "recipe.yaml"
+        if not cur.is_file() or cur.read_text() != text:
+            drift.append("recipe.yaml")
+        snap = args.out / "torch_repack.py"
+        if not snap.is_file() or snap.read_bytes() != tool_src:
+            drift.append("torch_repack.py")
+        if drift:
+            sys.exit(f"render drift in {args.out}: {', '.join(drift)} "
+                     f"differ(s) from a fresh render -- re-run render_recipe.py")
+        tr.log(f"no render drift in {args.out}")
+        return
+
+    (args.out / "recipe.yaml").write_text(text)
+    (args.out / "torch_repack.py").write_bytes(tool_src)
     # info/licenses/ comes from about.license_file, which resolves against the
     # recipe directory -- so the wheel's license blobs are laid down beside it.
     for flat, blob in sorted(tr.wheel_license_files(wheel).items()):
