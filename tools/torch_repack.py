@@ -1464,7 +1464,7 @@ def split_linux(sp: Path, pt_stage: Path, lt_stage: Path, subdir: str,
                  "CPU-wheel layout, which this pipeline does not target. The CUDA "
                  "wheels vendor in torch/lib with stock sonames.")
     tlib = sp / "torch" / "lib"
-    (lt_stage / "lib" / VENDOR_DIR).mkdir(parents=True)
+    (lt_stage / "lib" / VENDOR_DIR).mkdir(parents=True, exist_ok=True)
 
     big, vendored, stripped_cuda = [], [], []
     # regular .so files only: 2.9.0 aarch64 ships stray DIRECTORIES
@@ -1582,7 +1582,7 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
     """
     up = "../" * ups
     tinc = sp / "torch" / "include"
-    (lt_stage / "include").mkdir()
+    (lt_stage / "include").mkdir(exist_ok=True)
     for entry in sorted(tinc.iterdir()):
         if entry.name not in TORCH_OWN_HEADERS:
             continue  # third-party trees stay real in-package (clobber hazard)
@@ -1591,7 +1591,7 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
 
     tcmake = sp / "torch" / "share" / "cmake"
     sed_cmake(tcmake)
-    (lt_stage / "share").mkdir()
+    (lt_stage / "share").mkdir(exist_ok=True)
     shutil.move(tcmake, lt_stage / "share" / "cmake")
     # link lives at torch/share/cmake, resolved from torch/share: 5 ups to $PREFIX
     make_symlink(tcmake, f"{up}share/cmake")
@@ -2136,6 +2136,13 @@ def main() -> None:
     ap.add_argument("--skip-published", action="store_true",
                     help="skip building artifacts already on the release "
                          "(shared libtorch/nvshmem/triton across cells)")
+    ap.add_argument("--stage-prefix", type=Path, default=None,
+                    help="rattler-build mode: run the surgery into this single "
+                         "prefix (both halves; the shim symlinks already point "
+                         "at $PREFIX/lib) and emit no .conda")
+    ap.add_argument("--emit-metadata", type=Path, default=None,
+                    help="write the computed index/about/run_exports/prefix_files "
+                         "for both outputs as JSON (recipe generation reads it)")
     args = ap.parse_args()
     if args.skip_published:
         global SKIP_PUBLISHED
@@ -2174,15 +2181,23 @@ def main() -> None:
     torch_licenses = license_gate(wheel, "pytorch/libtorch")
 
     # ---- extract full wheel into the pytorch stage -------------------------
-    pt_stage = args.work / "pytorch_stage"
-    lt_stage = args.work / "libtorch_stage"
-    for s in (pt_stage, lt_stage):
-        if s.exists():
-            shutil.rmtree(s)
+    if args.stage_prefix is not None:
+        # rattler-build gives one $PREFIX and splits it afterwards via the
+        # outputs' `files:` globs. The surgery already writes shim symlinks
+        # as ../../../../<lib>, i.e. $PREFIX/lib, so pointing both stages at
+        # the same prefix produces exactly the tree that layout assumes.
+        pt_stage = lt_stage = args.stage_prefix
+        pt_stage.mkdir(parents=True, exist_ok=True)
+    else:
+        pt_stage = args.work / "pytorch_stage"
+        lt_stage = args.work / "libtorch_stage"
+        for s in (pt_stage, lt_stage):
+            if s.exists():
+                shutil.rmtree(s)
     sp_rel = "Lib/site-packages" if args.subdir == "win-64" else f"lib/python{args.py}/site-packages"
     sp = pt_stage / sp_rel
-    sp.mkdir(parents=True)
-    lt_stage.mkdir(parents=True)
+    sp.mkdir(parents=True, exist_ok=True)
+    lt_stage.mkdir(parents=True, exist_ok=True)
 
     extract_wheel(wheel, sp)
     if args.delete_wheel:
@@ -2243,7 +2258,16 @@ def main() -> None:
     if is_linux:
         bindir = pt_stage / "bin"
         bindir.mkdir(exist_ok=True)
-        (bindir / "torchrun").write_text(TORCHRUN)
+        if args.stage_prefix is not None:
+            # rattler-build finds prefix references by scanning for the build
+            # prefix itself, so the script must contain the real path: it then
+            # registers its own placeholder and does the install-time
+            # replacement. Writing our synthetic 255-char placeholder here
+            # would sail past that scan and ship an unrelocatable torchrun.
+            (bindir / "torchrun").write_text(
+                TORCHRUN.replace(PLACEHOLDER, str(args.stage_prefix)))
+        else:
+            (bindir / "torchrun").write_text(TORCHRUN)
         os.chmod(bindir / "torchrun", 0o755)
         prefix_files = dict(prefix_files)
         prefix_files["bin/torchrun"] = "text"
@@ -2352,6 +2376,41 @@ def main() -> None:
     lt_rex = {"weak": [f"libtorch >={args.version},<{nxt_minor}.0a0"]}
     pt_rex = {"weak": [f"pytorch >={args.version},<{nxt_minor}.0a0",
                        f"libtorch >={args.version},<{nxt_minor}.0a0"]}
+    if args.stage_prefix is not None:
+        # rattler-build 0.75 has no per-output about.extra: a top-level
+        # `extra:` is copied verbatim into EVERY output, so libtorch's
+        # vendored-component census would also land on pytorch, describing
+        # binaries that package does not ship. Put it in libtorch's payload
+        # instead -- it lands only where it is true, and a security team can
+        # read it without parsing conda metadata.
+        sbom_dir = lt_stage / "share" / "libtorch"
+        sbom_dir.mkdir(parents=True, exist_ok=True)
+        (sbom_dir / "vendored-sbom.json").write_text(json.dumps({
+            "vendored": lt_about["extra"]["vendored"],
+            "cuda_arch_list": lt_about["extra"].get("cuda_arch_list"),
+            "repacked_from": wheel_name,
+            "wheel_sha256": wheel_sha,
+        }, indent=2, sort_keys=True) + "\n")
+        log(f"SBOM -> share/libtorch/vendored-sbom.json "
+            f"({len(lt_about['extra']['vendored'])} components)")
+
+    if args.emit_metadata is not None:
+        args.emit_metadata.parent.mkdir(parents=True, exist_ok=True)
+        args.emit_metadata.write_text(json.dumps({
+            "libtorch": {"index": lt_index, "about": lt_about,
+                         "run_exports": lt_rex, "prefix_files": {}},
+            "pytorch": {"index": pt_index, "about": about,
+                        "run_exports": pt_rex, "prefix_files": prefix_files},
+            "licenses": sorted(torch_licenses),
+        }, indent=2, sort_keys=True))
+        log(f"metadata -> {args.emit_metadata}")
+
+    if args.stage_prefix is not None:
+        # rattler-build packages the prefix; licenses ride info/licenses via
+        # the recipe, and the payload copies were already written above.
+        log("staged into prefix; rattler-build will package it")
+        return
+
     emit_conda(lt_stage, args.outdir, lt_index, lt_about, {},
                licenses=torch_licenses, run_exports=lt_rex)
     emit_conda(pt_stage, args.outdir, pt_index, about, prefix_files,

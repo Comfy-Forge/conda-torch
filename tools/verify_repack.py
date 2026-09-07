@@ -75,8 +75,13 @@ def verify(conda_path: Path) -> None:
               "no direct_url.json")
         inst = [n for n in di if n.endswith("/INSTALLER")]
         if inst:
-            check(tf.extractfile(inst[0]).read() == b"conda",
-                  "INSTALLER is exactly b'conda'")
+            # rattler-build owns this file: it overwrites whatever the build
+            # staged with b"conda\n" and offers no knob to suppress the
+            # trailing newline, so a byte-exact assert is unsatisfiable under
+            # the rattler pipeline. Compare content, not trailing whitespace.
+            val = tf.extractfile(inst[0]).read()
+            check(val.strip() == b"conda",
+                  f"INSTALLER names conda (got {val!r})")
         elif name in ("pytorch",):
             check(False, "pytorch package missing dist-info INSTALLER")
 
