@@ -1758,6 +1758,23 @@ SIDE_META: Path | None = None
 SIDE_WHEEL: Path | None = None   # rattler-build's own verified `source:` download
 
 
+def side_stem(req: dict, build_number: int) -> str:
+    """The artifact filename stem for a side request, computed WITHOUT
+    building it -- so a fleet wave can skip an already-published shared
+    artifact before downloading its wheel. render_side_recipe.py cross-checks
+    this against what the builder actually produced, so the two cannot drift
+    apart silently."""
+    kind, name, ver = req["kind"], req["pypi_name"], req["version"]
+    if kind == "pywheel":
+        pytag = "py" + req["py"].replace(".", "")
+        hsh = hashlib.sha256(f"{name}|{ver}|{req['py']}".encode()).hexdigest()[:8]
+        return f"{name}-{ver}-repack_{pytag}_h{hsh}_{build_number}"
+    fam = int(re.search(r"-cu(\d+)$", name).group(1))
+    conda_name = "nvidia-nvshmem" if kind == "nvshmem" else req["conda_name"]
+    hsh = hashlib.sha256(f"{conda_name}|{ver}|cuda{fam}".encode()).hexdigest()[:8]
+    return f"{conda_name}-{ver}-cuda{fam}_repack_h{hsh}_{build_number}"
+
+
 def side_wheel(pypi_name: str, version: str, tags: list[str], work: Path) -> Path:
     """The wheel to repack. Under rattler-build this is the archive it already
     downloaded and checked against the recipe's sha256, so we neither fetch it

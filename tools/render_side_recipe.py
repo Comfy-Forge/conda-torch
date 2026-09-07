@@ -121,6 +121,11 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--side-build-number", type=int, default=0)
+    ap.add_argument("--skip-published", action="store_true",
+                    help="if this shared artifact is already published WITH a "
+                         "repodata fragment, write no recipe and exit 0 -- the "
+                         "caller then skips the build. Published artifacts are "
+                         "immutable, so rebuilding one can only waste a wave.")
     ap.add_argument("--check", action="store_true",
                     help="fail if the rendered recipe or its torch_repack.py "
                          "snapshot differs from a fresh render")
@@ -129,6 +134,14 @@ def main() -> None:
     req = json.loads(args.request)
     args.out.mkdir(parents=True, exist_ok=True)
     args.work.mkdir(parents=True, exist_ok=True)
+
+    stem = tr.side_stem(req, args.side_build_number)
+    if args.skip_published:
+        fragment = Path("meta") / req["subdir"] / f"{stem}.conda.json"
+        if fragment.exists() and tr.asset_published(req["subdir"],
+                                                    f"{stem}.conda"):
+            tr.log(f"SKIP {stem}: already published with fragment")
+            return
 
     url, sha = tr.pypi_wheel_url(req["pypi_name"], req["version"],
                                  wheel_tags(req))
@@ -152,6 +165,11 @@ def main() -> None:
     subprocess.run(cmd, check=True)
 
     meta = json.loads(meta_path.read_text())
+    built = f"{meta['index']['name']}-{meta['index']['version']}-{meta['index']['build']}"
+    if built != stem:
+        sys.exit(f"side_stem() says {stem} but the builder produced {built}: "
+                 f"the skip-published pre-check would consult the wrong "
+                 f"filename. Fix side_stem() before running a wave.")
     tool_src = (HERE / "torch_repack.py").read_bytes()
     # Same reason as the torch recipe: the recipe dir is outside
     # rattler-build's staging-cache key, so the script's hash rides in the

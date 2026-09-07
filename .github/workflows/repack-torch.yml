@@ -72,17 +72,93 @@ jobs:
           # cli-64.exe, so any locally installed setuptools is sufficient here
           pip install zstandard pefile setuptools
 
-      - name: Repack
+      - name: Install rattler-build
+        env:
+          RB_VERSION: "0.75.0"
+          RB_SHA256: "0eb3d0cc3ad93c2add7aa50af533aae1a5b9a884e51325e4926db829649e3891"
         run: |
-          python tools/torch_repack.py \
+          set -euo pipefail
+          url="https://github.com/prefix-dev/rattler-build/releases/download/v${RB_VERSION}/rattler-build-x86_64-unknown-linux-musl"
+          curl -sSfL "$url" -o /usr/local/bin/rattler-build
+          echo "${RB_SHA256}  /usr/local/bin/rattler-build" | sha256sum -c -
+          chmod +x /usr/local/bin/rattler-build
+          rattler-build --version
+
+      - name: Render recipes
+        # The recipe cannot be written by hand: depends come out of the
+        # extracted wheel's METADATA, a live conda-forge satisfiability check
+        # and an ELF/DLL audit. render_recipe.py runs the surgery once to
+        # learn them, then emits a recipe whose `source: sha256` makes the
+        # wheel check structural instead of bolted on.
+        run: |
+          set -euo pipefail
+          python tools/render_recipe.py \
             --version "$IN_VERSION" \
             --flavour "$IN_FLAVOUR" \
             --python "$IN_PYTHON" \
             --subdir "$IN_PLATFORM" \
             --build-number "$IN_BUILD_NUMBER" \
             --side-build-number "$IN_SIDE_BUILD_NUMBER" \
-            -o dist --work work --delete-wheel --skip-published
-          rm -rf work
+            --out recipe --work work
+          # The renderer's staged tree and its copy of the wheel are dead once
+          # the recipe exists -- rattler-build does its own verified download.
+          # Keep only the metadata the build step reads; runner disk is tight
+          # and a torch wheel is measured in gigabytes.
+          mv work/meta.json meta.json.keep
+          rm -rf work && mkdir work && mv meta.json.keep work/meta.json
+          df -h /
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Shared side artifacts (nvshmem/cudnn/triton) build from their own
+          # recipes: each has a different verified source than the torch
+          # recipe, and they are immutable at SIDE_BUILD across many cells.
+          python -c "import json; [print(json.dumps(r)) for r in json.load(open('work/meta.json'))['side_requests']]" > side_requests.jsonl
+          mapfile -t reqs < side_requests.jsonl
+          for i in "${!reqs[@]}"; do
+            # --skip-published writes no recipe when the shared artifact is
+            # already published WITH a fragment: it is immutable, so a wave
+            # rebuilding it can only burn time.
+            python tools/render_side_recipe.py \
+              --request "${reqs[$i]}" \
+              --side-build-number "$IN_SIDE_BUILD_NUMBER" \
+              --skip-published \
+              --out "side_recipe_$i" --work "side_work_$i"
+            rm -rf "side_work_$i"   # recipe is self-contained; free the wheel
+            if [ -f "side_recipe_$i/recipe.yaml" ]; then
+              rattler-build build \
+                --recipe "side_recipe_$i/recipe.yaml" \
+                --target-platform "$IN_PLATFORM" \
+                --output-dir out -c conda-forge --no-build-id
+            fi
+          done
+          # The libtorch half is shared across every shim of a cell, so on a
+          # shim run both halves can already be published. Rebuilding then
+          # produces bytes the upload step would throw away anyway (patchelf
+          # padding is not reproducible), so skip the build outright.
+          stems=$(python -c "import json; m = json.load(open('work/meta.json')); print(' '.join(f\"{m[k]['index']['name']}-{m[k]['index']['version']}-{m[k]['index']['build']}\" for k in ('libtorch', 'pytorch')))")
+          assets=$(gh release view "$IN_PLATFORM" --json assets -q '.assets[].name' || true)
+          need=0
+          for st in $stems; do
+            if [ -f "meta/$IN_PLATFORM/$st.conda.json" ] && echo "$assets" | grep -qxF "$st.conda"; then
+              echo "SKIP $st: already published with fragment"
+            else
+              need=1
+            fi
+          done
+          if [ "$need" = 1 ]; then
+            rattler-build build \
+              --recipe recipe/recipe.yaml \
+              --target-platform "$IN_PLATFORM" \
+              --output-dir out -c conda-forge --no-build-id
+          else
+            echo "both halves already published; nothing to build"
+          fi
+          shopt -s nullglob
+          for f in out/*/*.conda; do mv "$f" dist/; done
+          rm -rf out work recipe side_recipe_*
           ls -la dist/
 
       - name: Structural verification (RPATH lint, licenses, run_exports, .pyc)
