@@ -227,6 +227,18 @@ jobs:
           pip install -q zstandard
           shopt -s nullglob
           cd "$RUNNER_TEMP/dist"
+          # Gate the bytes that will actually be served: a half that is
+          # already published (fragment in meta/) is immutable, and the
+          # publish job drops the local rebuild of it -- so test the
+          # published asset, not the rebuild (same rule as the publisher).
+          for f in *.conda; do
+            if [ -f "$GITHUB_WORKSPACE/meta/$IN_PLATFORM/$f.json" ]; then
+              echo "$f is already published; gating the published bytes"
+              rm "$f"
+              gh release download "$IN_PLATFORM" --repo "$GITHUB_REPOSITORY" \
+                --pattern "$f" --dir "$RUNNER_TEMP/dist"
+            fi
+          done
           if ! ls libtorch-*.conda >/dev/null 2>&1; then
             # shim run: the donor published libtorch at this build number
             # already; take the release asset, not whatever Pages serves yet

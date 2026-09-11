@@ -80,24 +80,28 @@ def cells(grid: dict) -> list[dict]:
 
 
 def published_max(subdir: str) -> dict[tuple, int]:
-    """Highest published build number per (version, flavour, pytag), read from
-    the channel's own repodata."""
+    """Highest published build number per (version, flavour) LINE -- over the
+    libtorch half and every python shim -- read from the channel's own
+    repodata. Per-line, not per-shim: the shim pins libtorch at its own
+    build number, so a shim bumped to N while libtorch already sits at N
+    (published by another python's earlier run) would silently attach the
+    new shim to the OLD libtorch bytes instead of rebuilding anything."""
     import urllib.request
     url = f"https://comfy-forge.github.io/conda-torch/{subdir}/repodata.json"
     with urllib.request.urlopen(url, timeout=120) as fh:
         data = json.load(fh)
     best: dict[tuple, int] = {}
     for fn in data.get("packages.conda", {}):
-        if not fn.startswith("pytorch-"):
-            continue
         stem = fn[:-len(".conda")]
         try:
-            _, version, build = stem.split("-", 2)
+            name, version, build = stem.split("-", 2)
+            if name not in ("pytorch", "libtorch"):
+                continue
             flavour, rest = build.split("_repack_", 1)
-            pytag, _, num = rest.split("_")
+            num = rest.rsplit("_", 1)[1]
         except ValueError:
             continue
-        key = (version, flavour, pytag)
+        key = (version, flavour)
         best[key] = max(best.get(key, -1), int(num))
     return best
 
@@ -168,6 +172,8 @@ def main() -> None:
                     help="extra passes over cells still missing a fragment")
     ap.add_argument("--only", default="",
                     help="substring filter over 'version flavour python platform'")
+    ap.add_argument("--skip", action="append", default=[],
+                    help="substring over the same label; matching cells are left out (repeatable)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -182,10 +188,12 @@ def main() -> None:
     todo: list[tuple[dict, int]] = []
     for c in all_cells:
         c["flavour_build"] = c["flavour"].replace("cu", "cuda")
-        key = (c["version"], c["flavour_build"], c["pytag"])
+        key = (c["version"], c["flavour_build"])
         nxt = maxima[c["platform"]].get(key, -1) + 1
         label = f"{c['version']} {c['flavour']} {c['python']} {c['platform']}"
         if args.only and args.only not in label:
+            continue
+        if any(sk in label for sk in args.skip):
             continue
         if fragment_exists(c, nxt):
             log(f"already landed {label} _{nxt}")
