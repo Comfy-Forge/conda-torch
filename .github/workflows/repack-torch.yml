@@ -262,11 +262,26 @@ jobs:
           set -euo pipefail
           cuda="${IN_FLAVOUR#cu}"; cuda="${cuda%?}.${cuda: -1}"     # cu128 -> 12.8
           chan="$(python -c "import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())" "$RUNNER_TEMP/localchan")"
+          set +e
           python tools/win_gate.py --workdir "$RUNNER_TEMP/gate" \
             --python "$IN_PYTHON" --cuda "$cuda" \
             --spec "pytorch ==$IN_VERSION cuda${IN_FLAVOUR#cu}_repack_py${IN_PYTHON/./}_*" \
             --expect-build "$IN_BUILD_NUMBER" \
             -c "$chan" -c https://comfy-forge.github.io/conda-torch -c conda-forge
+          rc=$?
+          set -e
+          if [ "$rc" = 3 ]; then
+            # The interpreter itself is not on conda-forge for win-64 yet
+            # (py3.15 until its final lands): nobody can install this shim,
+            # so nothing can be imported. The shared libtorch half is gated
+            # through the line's other pythons; the shim's own python-
+            # specific bytes (torch_python.dll, .pyc) go out untested, as
+            # every linux cell does. Re-run win-clean-import.yml on the
+            # cell once the python exists.
+            echo "::warning::python $IN_PYTHON is not installable on win-64 from conda-forge yet; the clean-environment gate cannot run for this shim (libtorch is gated via the line's other pythons)"
+            exit 0
+          fi
+          exit "$rc"
       - name: Keep the DLL resolution map
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

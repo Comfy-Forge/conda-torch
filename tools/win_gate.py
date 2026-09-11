@@ -25,7 +25,9 @@ Three stages, each fatal:
              Optionally a consumer (torchvision et al.) is solved on top
              and imported too.
 
-Runs on Windows. Requires pixi on PATH.
+Runs on Windows. Requires pixi on PATH. Exit 1 = gate failed; exit 3 = the
+requested python minor is not installable on win-64 from these channels
+(untestable, not defective).
 
 Usage:
   win_gate.py --workdir W --python 3.12 --cuda 12.8 \
@@ -116,6 +118,19 @@ def main() -> None:
         sys.exit("win_gate.py runs on Windows (the loader being tested is Windows')")
     args.workdir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, CONDA_OVERRIDE_CUDA=args.cuda)
+
+    # ---- 0. is the interpreter even available? ------------------------------
+    # A python minor with no win-64 candidate on any channel (py3.15 until
+    # conda-forge ships it) makes the cell untestable, not defective: exit
+    # 3 so the caller can tell that apart from a gate failure. The shared
+    # libtorch half is still gated through the line's other pythons.
+    probe_dir = args.workdir / "python-probe"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    write_manifest(probe_dir, args.channel, args.python, [], args.cuda)
+    if subprocess.run(["pixi", "lock"], cwd=probe_dir, env=env).returncode != 0:
+        log(f"python {args.python} has no win-64 candidate on {args.channel}: "
+            "the cell cannot be installed anywhere yet, so it cannot be gated")
+        sys.exit(3)
 
     # ---- 1. solve -----------------------------------------------------------
     write_manifest(args.workdir, args.channel, args.python, args.spec, args.cuda)
