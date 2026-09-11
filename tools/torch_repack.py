@@ -1480,8 +1480,13 @@ def cf_dll_basenames(pkg: str, subdir: str, version: str) -> set[str]:
             continue
         with tarfile.open(fileobj=io.BytesIO(raw)) as tf:
             paths = json.load(tf.extractfile("info/paths.json"))
+        # exactly Library/bin/<name>: a DLL in a SUBDIRECTORY is not on any
+        # loader search path (conda-forge's CUDA 13 cuda-cupti puts its
+        # DLLs in Library/bin/x64/, which no add_dll_directory covers --
+        # measured: cupti64_2025.3.0.dll "present" yet unresolvable)
         return {PurePosixPath(p["_path"]).name.lower() for p in paths["paths"]
                 if p["_path"].lower().startswith("library/bin/")
+                and "/" not in p["_path"][len("library/bin/"):]
                 and p["_path"].lower().endswith(".dll")}
     return set()
 
