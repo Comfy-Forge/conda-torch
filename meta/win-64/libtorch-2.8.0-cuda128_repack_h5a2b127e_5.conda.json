@@ -1,0 +1,47 @@
+{
+ "arch": "x86_64",
+ "build": "cuda128_repack_h5a2b127e_5",
+ "build_number": 5,
+ "constrains": [
+  "pytorch ==2.8.0 cuda128_repack_*"
+ ],
+ "depends": [
+  "__cuda",
+  "cuda-cudart >=12.8.90,<=12.9.79",
+  "cuda-nvrtc >=12.8.93,<=12.9.86",
+  "cuda-version >=12.8,<13",
+  "intel-openmp",
+  "libcublas >=12.8.4.1,<=12.9.2.10",
+  "libcudnn >=9.10.2.21,<=9.26.0.51",
+  "libcufft >=11.3.3.83,<=11.4.1.4",
+  "libcurand >=10.3.9.90,<11.0a0",
+  "libcusolver >=11.7.3.90,<=11.7.5.82",
+  "libcusparse >=12.5.8.93,<=12.8.6.49",
+  "libnvjitlink >=12.8.93,<13.0a0",
+  "ucrt >=10.0.20348.0",
+  "vc >=14.2,<15",
+  "vc14_runtime >=14.44"
+ ],
+ "license": "BSD-3-Clause AND LicenseRef-NVIDIA-Proprietary",
+ "license_family": "BSD",
+ "md5": "b152834612c5b6d1feb60b3307f20dd3",
+ "name": "libtorch",
+ "platform": "win",
+ "provenance": {
+  "run_id": "34628093266",
+  "run_url": "https://github.com/Comfy-Forge/conda-torch/actions/runs/34628093266",
+  "source_commit": "0a8a14d796da305c03c1857cd15e9c9b28dcf17a",
+  "wheel_hash_source": "index+grid",
+  "wheel_sha256": "fca71fd04bf524a54370386b85e2e89840c2bbc86dc2a8df2aadedd3bba5645f"
+ },
+ "run_exports": {
+  "weak": [
+   "libtorch >=2.8.0,<2.9.0a0"
+  ]
+ },
+ "sha256": "b655e1c0871566ef656b6cf327deb329397db8625b7ecad3f3cdc91ef9549bfc",
+ "size": 531493812,
+ "subdir": "win-64",
+ "timestamp": 1789148119586,
+ "version": "2.8.0"
+}
