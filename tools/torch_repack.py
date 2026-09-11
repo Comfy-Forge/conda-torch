@@ -26,7 +26,10 @@ Per-platform layout:
                   checks keep working. Vendored CUDA DLLs and 2.7 GB of
                   dead .lib archives are stripped; CUDA comes from
                   conda-forge packages whose DLLs land in Library/bin
-                  (already on torch's own search path).
+                  (already on torch's own search path). Two NVIDIA DLLs
+                  stay vendored because conda cannot supply them under
+                  the basename torch imports: cupti64_<toolkit>.dll (see
+                  WIN_VENDORED_NV) and nvToolsExt64_1.dll.
 
 Every transformation here is a mitigation from the five-hacker
 investigation; see README.md for the rationale of each.
@@ -225,21 +228,47 @@ PY_DEP_MAP = {
 # intel-openmp dep — one OpenMP runtime in the process, conda's.
 # zlibwapi.dll is deliberately KEPT (tiny, and conda-forge cudnn does not
 # ship it under that name).
+#
+# cupti64_<toolkit>.dll is deliberately NOT in this list. Every other CUDA
+# basename is major-versioned (cudart64_12, cublas64_12, cudnn64_9 ...) and
+# stable across a CUDA major, so any conda-forge build in the flavour's
+# cuda-version window supplies it. CUPTI's basename carries the toolkit
+# PATCH version (cupti64_2025.1.1.dll for 12.8.90, _2025.2.1 for 12.9.79,
+# _2024.1.0 for 12.4.99 vs _2024.1.1 for 12.4.127), torch_cpu.dll imports
+# it STATICALLY, and conda-forge's cuda-cupti pins cuda-version to the
+# exact minor. So a `cuda-cupti` dependency either (a) admits builds that
+# do not ship the imported name and `import torch` dies with WinError 126
+# on the first DLL in the load order (measured: cuda-foundry's clean-env
+# tests, cuda-cupti 12.9.79 in a cu128 env), or (b) is clamped to the one
+# proven version, which forces cuda-version to that exact minor and makes
+# the package UNSAT next to anything built against a newer toolkit —
+# whereupon the solver silently falls back to an older wide-window build
+# and case (a) happens anyway. Neither is a working package. The PyPI wheel
+# is the source of truth for what torch needs; it ships the exact CUPTI it
+# was linked against, and conda cannot supply that name across the
+# cuda-version window, so the DLL stays vendored in torch/lib (4.4 MB) with
+# no cuda-cupti dependency at all. conda-forge's own win-64 pytorch has no
+# CUPTI import (kineto is built without it there), which is why their
+# `cuda-cupti` run dep never bit them.
 WIN_STRIP_DLL = re.compile(
-    r"^(cudart64|cublas64|cublasLt64|cudnn|cufft64|cufftw64|cupti64"
+    r"^(cudart64|cublas64|cublasLt64|cudnn|cufft64|cufftw64"
     r"|curand64|cusolver64|cusolverMg64|cusparse64|nvJitLink|nvrtc64"
     r"|nvrtc-builtins64|libiomp)", re.IGNORECASE)
+# NVIDIA DLLs kept vendored on purpose (no conda-forge win-64 package ships
+# the imported basename inside the flavour window — see above for CUPTI;
+# nvToolsExt64_1.dll is NVTX v1, which conda-forge never built for win-64:
+# `cuda-nvtx` has no win-64 build at all, only header-only NVTX3).
+# Their license text (NVIDIA EULA) rides the libtorch payload.
+WIN_VENDORED_NV = re.compile(r"^(cupti64_[\d.]+|nvToolsExt64_1)\.dll$", re.I)
 # imported-basename -> conda-forge package. On Windows the basename IS
 # the soname: a version that exists is NOT enough, the exact DLL name
-# torch's PE import table demands must ship in the pinned window (CUPTI's
-# basename changes every CUDA minor — cupti64_2025.1.1.dll vs _2025.2.1;
-# the audit runs for every stripped basename on every flavour).
+# torch's PE import table demands must ship in the pinned window (the
+# audit runs for every stripped basename on every flavour).
 WIN_DLL_PKG = [
     (re.compile(r"^cudart64", re.I), "cuda-cudart"),
     (re.compile(r"^cublas(lt)?64", re.I), "libcublas"),
     (re.compile(r"^cudnn", re.I), "libcudnn"),
     (re.compile(r"^cufftw?64", re.I), "libcufft"),
-    (re.compile(r"^cupti64", re.I), "cuda-cupti"),
     (re.compile(r"^curand64", re.I), "libcurand"),
     (re.compile(r"^cusolver(mg)?64", re.I), "libcusolver"),
     (re.compile(r"^cusparse64", re.I), "libcusparse"),
@@ -266,12 +295,26 @@ WIN_KEEP_LIB = {
     "caffe2_nvrtc.lib", "kineto.lib",
 }
 # conda-forge CUDA packages backing the stripped DLLs (win has no
-# nccl/cufile/cusparselt/nvshmem). Lower bounds come from the linux
-# wheel's METADATA pins for the same (version, flavour).
+# nccl/cufile/cusparselt/nvshmem; cupti is vendored, see WIN_STRIP_DLL).
+# Lower bounds come from the linux wheel's METADATA pins for the same
+# (version, flavour).
 WIN_CUDA_PKGS = {
     "cuda-cudart", "libcublas", "libcudnn", "libcusparse", "libcufft",
-    "libcurand", "libcusolver", "cuda-nvrtc", "libnvjitlink", "cuda-cupti",
+    "libcurand", "libcusolver", "cuda-nvrtc", "libnvjitlink",
 }
+# DLLs the OS or the vc14_runtime/ucrt packages provide: the only imports a
+# kept torch DLL may have besides other kept DLLs and the stripped
+# (conda-forge-backed) set. Anything else is an unmapped import and the
+# package would fail to load — refuse to publish it. The full transitive
+# walk against a real prefix is tools/win_dll_audit.py (the CI gate); this
+# is the static, build-time half of the same invariant.
+WIN_OS_DLL = re.compile(
+    r"^(api-ms-win-.*|ext-ms-.*|kernel32|kernelbase|ntdll|advapi32|user32|gdi32"
+    r"|ws2_32|shell32|ole32|oleaut32|shlwapi|dbghelp|psapi|iphlpapi|userenv"
+    r"|msvcrt|crypt32|bcrypt|secur32|version|winmm|rpcrt4|setupapi|cfgmgr32"
+    r"|powrprof|netapi32|imagehlp|wintrust|synchronization|dxgi|d3d1[12]"
+    r"|msvcp140(_\w+)?|vcruntime140(_\w+)?|vcomp140|concrt140|ucrtbase"
+    r"|python3\d*)\.dll$", re.I)   # python3XX.dll: the python package, prefix root
 
 
 def sha256_file(p: Path) -> str:
@@ -887,6 +930,21 @@ def cuda_deps(requires: list[tuple[str, list[str], str]], flavour: str) -> list[
     return deps
 
 
+_LINUX_CMAP: dict[tuple, dict[str, str]] = {}
+
+
+def cuda_deps_from_linux(version: str, flavour: str, py: str) -> list[str]:
+    """Every CUDA dep the linux wheel of the same (version, flavour) would
+    get, as `pkg bound` strings (range-read once, cached)."""
+    key = (version, flavour, py)
+    if key not in _LINUX_CMAP:
+        log("range-reading linux METADATA for CUDA lower bounds...")
+        linux_req = parse_requires(remote_metadata(version, flavour, py, "linux-64"),
+                                   py, "linux-64")
+        _LINUX_CMAP[key] = cuda_dep_map(linux_req, flavour)
+    return [f"{pkg} {bound}".strip() for pkg, bound in _LINUX_CMAP[key].items()]
+
+
 def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
     """win-64 libtorch CUDA deps.
 
@@ -897,10 +955,8 @@ def win_cuda_deps(version: str, flavour: str, py: str) -> list[str]:
     """
     cuda_minor = f"{flavour[2:-1]}.{flavour[-1]}"
     deps = ["__cuda", f"cuda-version >={cuda_minor},<{int(flavour[2:-1]) + 1}"]
-    log("range-reading linux METADATA for CUDA lower bounds...")
-    linux_req = parse_requires(remote_metadata(version, flavour, py, "linux-64"),
-                               py, "linux-64")
-    cmap = cuda_dep_map(linux_req, flavour)
+    cuda_deps_from_linux(version, flavour, py)
+    cmap = _LINUX_CMAP[(version, flavour, py)]
     found = set()
     for pkg, bound in cmap.items():
         if pkg in WIN_CUDA_PKGS:
@@ -1649,24 +1705,43 @@ def move_headers_cmake(sp: Path, lt_stage: Path, ups: int) -> None:
 
 
 def split_win64(sp: Path, pt_stage: Path, lt_stage: Path,
-                stage_prefix: Path | None = None) -> tuple[dict[str, str], set[str], list[str]]:
+                stage_prefix: Path | None = None
+                ) -> tuple[dict[str, str], set[str], list[str], list[str]]:
     """Windows: no relocation at all. Lib/site-packages is python-version-
     independent, so libtorch owns the big python-independent files AT
     their wheel paths under torch/, and pytorch owns the rest. Strips:
     vendored CUDA DLLs (conda-forge supplies identical basenames in
     Library/bin, already on torch's search path), libiomp*/stubs
-    (intel-openmp dep instead), and the dead .lib archives.
+    (intel-openmp dep instead), and the dead .lib archives. CUPTI and
+    NVTX v1 stay vendored (WIN_VENDORED_NV).
 
     Returns (prefix_files, union of PE-imported basenames of torch's own
-    kept DLLs, stripped DLL names) for the basename audit.
+    kept DLLs, stripped DLL names, kept DLL names) for the basename audit
+    and the vendored-NVIDIA license/SBOM bookkeeping.
     """
     tlib = sp / "torch" / "lib"
     # parse imports BEFORE stripping: the import table of the KEPT DLLs
     # names exactly the basenames conda-forge must supply
     imports: set[str] = set()
+    per_dll: dict[str, set[str]] = {}
     for p in sorted(tlib.glob("*.dll")):
         if not WIN_STRIP_DLL.match(p.name):
-            imports |= pe_imports(p)
+            per_dll[p.name] = pe_imports(p)
+            imports |= per_dll[p.name]
+    # Static resolution gate, build-time half: every import of a kept DLL
+    # must be another kept DLL (vendored), a stripped one (conda-forge
+    # supplies it; the basename audit proves the exact name ships), or an
+    # OS / vc14_runtime / ucrt DLL. A name outside those three sets has no
+    # provider anywhere and would surface on Windows as
+    # "Error loading shm.dll or one of its dependencies" — refuse now.
+    all_names = {p.name.lower() for p in tlib.glob("*.dll")}
+    unmapped = {imp for imps in per_dll.values() for imp in imps
+                if imp.lower() not in all_names and not WIN_OS_DLL.match(imp)
+                and imp.lower() != "nvcuda.dll"}   # driver; delay-loaded
+    if unmapped:
+        sys.exit(f"kept torch DLLs import {sorted(unmapped)}, which neither the "
+                 "wheel, conda-forge (WIN_STRIP_DLL/WIN_DLL_PKG) nor the OS "
+                 "provides — extend the mapping or vendor the DLL")
     stripped_dll, stripped_lib, kept_dll = [], [], []
     for p in sorted(tlib.iterdir()):
         if p.suffix.lower() == ".dll":
@@ -1683,8 +1758,23 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path,
                 kept_dll.append(p.name)  # unknown survivor: keep, python-independent
     log(f"win strip: {len(stripped_dll)} DLLs ({stripped_dll}); "
         f"{len(stripped_lib)} .lib ({stripped_lib}); kept {kept_dll}")
-    if "cudart64_12.dll" in kept_dll or not any(d.startswith("torch_cuda") for d in kept_dll):
+    if any(d.lower().startswith("cudart64") for d in kept_dll) \
+            or not any(d.startswith("torch_cuda") for d in kept_dll):
         sys.exit("win strip sanity check failed")
+    # CUPTI is a hard static import of torch_cpu.dll in every cu126+ PyPI
+    # wheel measured (2.8.0 .. 2.14.0; the cu124 wheels ship it without
+    # importing it). Whatever the wheel ships is kept — the strip regex
+    # never touches it — and when torch_cpu.dll names one, that exact
+    # basename must be in the payload or the package cannot load.
+    cupti_imported = {i.lower() for i in per_dll.get("torch_cpu.dll", set())
+                      if i.lower().startswith("cupti64")}
+    cupti_kept = {d.lower() for d in kept_dll if d.lower().startswith("cupti64")}
+    if not cupti_imported <= cupti_kept:
+        sys.exit(f"torch_cpu.dll imports {sorted(cupti_imported)} but torch/lib "
+                 f"keeps {sorted(cupti_kept)}: CUPTI must ship vendored under "
+                 "exactly the imported basename")
+    log(f"CUPTI vendored: {sorted(cupti_kept)} (imported by torch_cpu.dll: "
+        f"{sorted(cupti_imported) or 'none'})")
 
     sed_cmake(sp / "torch" / "share" / "cmake")
 
@@ -1714,7 +1804,42 @@ def split_win64(sp: Path, pt_stage: Path, lt_stage: Path,
     # entry point: launcher + registered text script (see WIN_MAIN comment)
     prefix_files: dict[str, str] = {}
     win_launcher_pair(pt_stage / "Scripts", prefix_files, stage_prefix)
-    return prefix_files, imports, stripped_dll
+    return prefix_files, imports, stripped_dll, kept_dll
+
+
+def nvidia_eula(flavour: str, version_hint: str | None) -> dict[str, bytes]:
+    """The NVIDIA EULA that governs the vendored CUPTI/NVTX DLLs, range-read
+    out of the matching nvidia-cuda-cupti-cuNN wheel on PyPI (every CUDA
+    component wheel ships the same EULA as License.txt). NVIDIA's
+    redistribution terms make the text a condition of shipping the DLL, so
+    an output carrying the DLL must carry this. Exact version when the
+    linux METADATA pins one; otherwise the newest release in the flavour's
+    major.minor, then the newest release at all."""
+    major = flavour[2:-1]
+    # CUDA 12 components are `nvidia-*-cu12`; from CUDA 13 the suffix is
+    # gone (`nvidia-cuda-cupti` 13.x) and the -cu13 names are placeholders.
+    pypi = f"nvidia-cuda-cupti-cu{major}" if int(major) < 13 else "nvidia-cuda-cupti"
+    api = json.load(fetch(f"https://pypi.org/pypi/{pypi}/json", 60))
+    releases = {v: fs for v, fs in api.get("releases", {}).items()
+                if v.startswith(f"{major}.") and re.fullmatch(r"[0-9.]+", v) and fs}
+    want = f"{major}.{flavour[-1]}."
+    cands = ([version_hint] if version_hint in releases else []) + \
+        sorted((v for v in releases if v.startswith(want)), key=V, reverse=True) + \
+        sorted(releases, key=V, reverse=True)
+    for ver in cands:
+        files = [f for f in releases[ver] if f["filename"].endswith(".whl")]
+        if not files:
+            continue
+        f = next((f for f in files if "win_amd64" in f["filename"]), files[0])
+        zf = zipfile.ZipFile(io.BufferedReader(RangeFile(f["url"]), 256 * 1024))
+        name = next((n for n in zf.namelist()
+                     if ".dist-info/" in n and n.lower().endswith("license.txt")), None)
+        if name is None:
+            continue
+        log(f"NVIDIA EULA for vendored DLLs: {f['filename']}::{name}")
+        return {name.replace("/", "_"): zf.read(name)}
+    sys.exit(f"no License.txt found in any {pypi} {major}.x wheel on PyPI; cannot "
+             "ship vendored NVIDIA DLLs without their license text")
 
 
 # --------------------------------------------------------------------------
@@ -2374,6 +2499,7 @@ def main() -> None:
         hash_source = "local-wheel"
     wheel_sha = sha256_file(wheel)
     torch_licenses = license_gate(wheel, "pytorch/libtorch")
+    wheel_lics = dict(torch_licenses)   # the wheel's own texts (pytorch's set)
 
     # ---- extract full wheel into the pytorch stage -------------------------
     if args.stage_prefix is not None:
@@ -2447,7 +2573,7 @@ def main() -> None:
                 side_repack_pywheel(name, floor, args.py, args.subdir,
                                     args.outdir, args.work, SIDE_BUILD)
     else:
-        prefix_files, win_imports, win_stripped = split_win64(
+        prefix_files, win_imports, win_stripped, win_kept = split_win64(
             sp, pt_stage, lt_stage, args.stage_prefix)
 
     # ---- entry point (POSIX; win handled inside split_win64) ---------------
@@ -2475,14 +2601,26 @@ def main() -> None:
     plat = PLATFORMS[args.subdir]
     pytag = "py" + py.replace(".", "")
     now = int(time.time() * 1000)
+    lt_license = "BSD-3-Clause"
+    win_vendored_nv: list[str] = []
     if args.subdir == "win-64":
         lt_deps = win_cuda_deps(args.version, flavour, py) + [
             "intel-openmp", "ucrt >=10.0.20348.0", "vc >=14.2,<15",
             "vc14_runtime >=14.44",
         ]
         # every stripped-but-imported DLL basename must provably ship
-        # inside the pinned windows (cupti's is minor-versioned)
+        # inside the pinned windows
         lt_deps = win_basename_audit(win_imports, win_stripped, lt_deps, flavour)
+        # the vendored NVIDIA DLLs (CUPTI, NVTX v1) carry their EULA in the
+        # libtorch payload and are declared in the license expression
+        win_vendored_nv = sorted(d for d in win_kept if WIN_VENDORED_NV.match(d))
+        if win_vendored_nv:
+            cupti_hint = next((spec_floor(d.partition(" ")[2]) for d in
+                               cuda_deps_from_linux(args.version, flavour, py)
+                               if d.partition(" ")[0] == "cuda-cupti"), None)
+            torch_licenses.update(nvidia_eula(flavour, cupti_hint))
+            lt_license = "BSD-3-Clause AND LicenseRef-NVIDIA-Proprietary"
+            log(f"vendored NVIDIA DLLs kept in torch/lib: {win_vendored_nv}")
     else:
         # sleef dep iff the shim actually got the redirect — read it back off
         # the staged binary rather than assuming, so the verifier's
@@ -2514,7 +2652,7 @@ def main() -> None:
         "build": lt_build, "build_number": args.build_number,
         "depends": sorted(set(lt_deps + extra_lt_deps)),
         "constrains": [f"pytorch {args.version} cuda{flavour[2:]}_repack_*"],
-        "license": "BSD-3-Clause", "license_family": "BSD",
+        "license": lt_license, "license_family": "BSD",
         "timestamp": now,
     }
     nxt = f"{py.split('.')[0]}.{int(py.split('.')[1]) + 1}"
@@ -2557,7 +2695,14 @@ def main() -> None:
     # best-effort SBOM of the third-party code fused into libtorch (forward-
     # only; a security team otherwise has to redo strings/nm archaeology)
     lt_about = dict(about)
-    lt_about["extra"] = {**about["extra"], "vendored": vendored_sbom(lt_stage, is_linux)}
+    lt_about["license"] = lt_license
+    sbom = vendored_sbom(lt_stage, is_linux)
+    for d in win_vendored_nv:
+        comp = "CUPTI" if d.lower().startswith("cupti64") else "NVTX v1 (nvToolsExt)"
+        ver = re.sub(r"(?i)^cupti64_|\.dll$", "", d) if comp == "CUPTI" else "1"
+        sbom.append({"component": comp, "linkage": f"dynamic (vendored torch/lib/{d})",
+                     "version": ver, "license": "LicenseRef-NVIDIA-Proprietary"})
+    lt_about["extra"] = {**about["extra"], "vendored": sbom}
 
     # licenses ride the libtorch payload too (its stage has no dist-info)
     LT_OWNED.append("share/licenses/libtorch/**")
@@ -2603,7 +2748,13 @@ def main() -> None:
                          "run_exports": lt_rex, "prefix_files": {}},
             "pytorch": {"index": pt_index, "about": about,
                         "run_exports": pt_rex, "prefix_files": prefix_files},
-            "licenses": sorted(torch_licenses),
+            "licenses": sorted(wheel_lics),
+            "lt_licenses": sorted(torch_licenses),
+            # texts not present in the source wheel (the NVIDIA EULA for
+            # vendored DLLs): the renderer lays them beside the recipe
+            "extra_license_blobs": {k: v.decode("utf-8", errors="replace")
+                                    for k, v in sorted(torch_licenses.items())
+                                    if k not in wheel_lics},
             "lt_owned": sorted(set(LT_OWNED)),
             "side_requests": SIDE_REQUESTS,
         }, indent=2, sort_keys=True))
@@ -2618,7 +2769,7 @@ def main() -> None:
     emit_conda(lt_stage, args.outdir, lt_index, lt_about, {},
                licenses=torch_licenses, run_exports=lt_rex)
     emit_conda(pt_stage, args.outdir, pt_index, about, prefix_files,
-               licenses=torch_licenses, run_exports=pt_rex)
+               licenses=wheel_lics, run_exports=pt_rex)
     log("done")
 
 

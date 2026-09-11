@@ -112,6 +112,29 @@ Non-negotiables, each one empirically earned:
   `paths.json`; enumerate files from the wheel zip, never `top_level.txt`.
 - rattler-build (if used) needs `binary_relocation: false` or it silently
   rewrites RPATHs in every binary.
+- win-64: `cupti64_<toolkit>.dll` stays **vendored** in `torch/lib` and the
+  package carries **no `cuda-cupti` dependency**. Its basename embeds the
+  toolkit patch version (`cupti64_2025.1.1.dll` for 12.8.90, `_2025.2.1`
+  for 12.9.79), `torch_cpu.dll` imports it statically, and conda-forge's
+  `cuda-cupti` pins `cuda-version` to one exact minor — so a dependency
+  either admits a build without the name (`import torch` dies with
+  "WinError 126 ... shm.dll or one of its dependencies", the first DLL in
+  load order, never the missing one) or clamps the env to one CUDA minor
+  and goes UNSAT next to anything built against a newer toolkit, at which
+  point the solver silently falls back to an older wide-window build and
+  breaks the same way. Measured on cuda-foundry's clean-env tests,
+  2026-09-11. `nvToolsExt64_1.dll` (NVTX v1, no conda-forge win build)
+  stays vendored for the same reason; both carry the NVIDIA EULA in
+  `share/licenses/libtorch/` and are declared in the license expression.
+- win-64: **every repack must import in a clean environment before it is
+  published.** `repack-torch.yml` runs `tools/win_gate.py` on a stock
+  Windows runner between build and publish: solve the just-built pair from
+  a `file://` channel + this channel + conda-forge, walk the PE import tree
+  of every DLL under `torch/lib` (`tools/win_dll_audit.py`, prints every
+  basename that resolves nowhere), `import torch`, a CPU op,
+  `torch.cuda.is_available()`. Nothing had imported a win-64 repack in a
+  clean env before this gate existed — every consumer built against the
+  conda-forge mirror, which outranks the repack.
 
 ## Tools
 
@@ -123,6 +146,10 @@ Non-negotiables, each one empirically earned:
 - `tools/sweep_solve.py` — verification: one live `pixi lock` per grid entry,
   asserting the newest build resolves from this channel's release URL.
 - `tools/check_lock.py` — scans a lockfile against `known_bad.json`.
+- `tools/win_gate.py`, `tools/win_dll_audit.py`, `tools/local_channel.py` —
+  the win-64 clean-environment gate (see above); `win-clean-import.yml`
+  runs it against the live channel for any cell, optionally with
+  consumer-style pins and a consumer package solved on top.
 
 ## Channel status (2026-09-02)
 

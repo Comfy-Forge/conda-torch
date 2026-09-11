@@ -1,0 +1,91 @@
+name: win-clean-import
+
+# The win-64 clean-environment gate, run against the LIVE channel for one
+# cell: solve `pytorch <version> cuda<NNN>_repack_py<XY>_*` from
+# comfy-forge.github.io/conda-torch + conda-forge into a fresh env on a
+# stock windows runner, resolve every DLL import under torch/lib
+# transitively (tools/win_dll_audit.py), and `import torch`. Exists because
+# nothing had ever imported a win-64 repack in a clean env before 2026-09:
+# every consumer built against the conda-forge mirror, which outranks the
+# repack, and the first clean solve died with "Error loading shm.dll or one
+# of its dependencies" (cupti64_2025.1.1.dll absent: cuda-cupti 12.9.79 in
+# a cu128 env). repack-torch.yml runs the same gate on the artifacts it
+# just built, BEFORE publishing them; this workflow re-checks what is
+# already published (grid-wide sweeps, consumer scenarios).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "torch version (e.g. 2.8.0)"
+        default: "2.8.0"
+      flavour:
+        description: "CUDA flavour (e.g. cu128)"
+        default: "cu128"
+      python:
+        description: "python minor (e.g. 3.12)"
+        default: "3.12"
+      build_number:
+        description: "exact build number both halves must solve to (empty = whatever wins)"
+        default: ""
+      extra_specs:
+        description: "extra match specs forced into the solve, ';'-separated (consumer-style pins, e.g. 'cuda-cudart >=12.9.79,<13.0a0')"
+        default: ""
+      consumer:
+        description: "consumer spec solved on top and imported (e.g. 'torchvision 0.23.* cuda128_torch28_py312_*'); empty = none"
+        default: ""
+      consumer_channel:
+        description: "channel prepended for the consumer solve"
+        default: "https://comfy-forge.github.io/cuda-foundry"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # inputs reach the shell only as environment variables (CWE-78)
+      IN_VERSION: ${{ inputs.version }}
+      IN_FLAVOUR: ${{ inputs.flavour }}
+      IN_PYTHON: ${{ inputs.python }}
+      IN_BUILD_NUMBER: ${{ inputs.build_number }}
+      IN_EXTRA_SPECS: ${{ inputs.extra_specs }}
+      IN_CONSUMER: ${{ inputs.consumer }}
+      IN_CONSUMER_CHANNEL: ${{ inputs.consumer_channel }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.79.0
+          run-install: false
+
+      - name: Clean-environment gate (solve, resolve every DLL import, import torch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cuda="${IN_FLAVOUR#cu}"; cuda="${cuda%?}.${cuda: -1}"     # cu128 -> 12.8
+          pytag="py${IN_PYTHON/./}"
+          args=(--workdir "$RUNNER_TEMP/gate" --python "$IN_PYTHON" --cuda "$cuda"
+                --spec "pytorch ==$IN_VERSION cuda${IN_FLAVOUR#cu}_repack_${pytag}_*"
+                -c https://comfy-forge.github.io/conda-torch -c conda-forge)
+          [ -z "$IN_BUILD_NUMBER" ] || args+=(--expect-build "$IN_BUILD_NUMBER")
+          if [ -n "$IN_EXTRA_SPECS" ]; then
+            IFS=';' read -ra extra <<< "$IN_EXTRA_SPECS"
+            for s in "${extra[@]}"; do args+=(--spec "$s"); done
+          fi
+          if [ -n "$IN_CONSUMER" ]; then
+            args+=(--consumer "$IN_CONSUMER" --consumer-channel "$IN_CONSUMER_CHANNEL")
+          fi
+          python tools/win_gate.py "${args[@]}"
+
+      - name: Keep the DLL resolution map
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dll-audit-${{ inputs.version }}-${{ inputs.flavour }}-py${{ inputs.python }}
+          path: ${{ runner.temp }}/gate/dll-audit.json
+          if-no-files-found: ignore
+          retention-days: 14

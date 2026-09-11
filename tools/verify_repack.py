@@ -161,9 +161,65 @@ def verify(conda_path: Path) -> None:
         if name == "libtorch" and subdir == "win-64":
             bad_dll = [n for n in members if n.lower().endswith(".dll")
                        and n.rsplit("/", 1)[-1].lower().startswith(
-                ("cudart64", "cublas64", "cudnn", "cufft64", "cupti64", "curand64",
+                ("cudart64", "cublas64", "cudnn", "cufft64", "curand64",
                  "cusolver64", "cusparse64", "nvjitlink", "nvrtc64", "libiomp5md"))]
             check(not bad_dll, f"no vendored CUDA/iomp DLLs {bad_dll[:3]}")
+            # PE import gate over the payload's own DLLs (the static half of
+            # tools/win_dll_audit.py): every static import must be another
+            # payload DLL, a stripped conda-forge-backed basename, or an
+            # OS / vc14_runtime / ucrt DLL. CUPTI in particular MUST be
+            # vendored: its basename carries the toolkit patch version
+            # (cupti64_2025.1.1.dll), torch_cpu.dll imports it statically,
+            # and conda-forge's cuda-cupti cannot be relied on to ship that
+            # name across the flavour's cuda-version window (see
+            # torch_repack.py WIN_STRIP_DLL). So a cuda-cupti dep must NOT
+            # exist, and the imported cupti basename must be in the payload.
+            import re as _re3
+            import pefile as _pefile
+            cf_backed = _re3.compile(
+                r"^(cudart64|cublas64|cublasLt64|cudnn|cufft64|cufftw64|curand64"
+                r"|cusolver64|cusolverMg64|cusparse64|nvJitLink|nvrtc64"
+                r"|nvrtc-builtins64|libiomp)", _re3.I)
+            os_dll = _re3.compile(
+                r"^(api-ms-win-.*|ext-ms-.*|kernel32|kernelbase|ntdll|advapi32|user32|gdi32"
+                r"|ws2_32|shell32|ole32|oleaut32|shlwapi|dbghelp|psapi|iphlpapi|userenv"
+                r"|msvcrt|crypt32|bcrypt|secur32|version|winmm|rpcrt4|setupapi|cfgmgr32"
+                r"|powrprof|netapi32|imagehlp|wintrust|synchronization|dxgi|d3d1[12]"
+                r"|msvcp140(_\w+)?|vcruntime140(_\w+)?|vcomp140|concrt140|ucrtbase"
+                r"|python3\d*)\.dll$", _re3.I)
+            payload_dlls = {n.rsplit("/", 1)[-1].lower(): n for n in members
+                            if "/torch/lib/" in n and n.lower().endswith(".dll")}
+            unresolved: list[str] = []
+            cupti_imported: set[str] = set()
+            for base, n in sorted(payload_dlls.items()):
+                blob = tf.extractfile(members[n]).read()
+                pe = _pefile.PE(data=blob, fast_load=True)
+                pe.parse_data_directories(directories=[
+                    _pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
+                for e in getattr(pe, "DIRECTORY_ENTRY_IMPORT", None) or []:
+                    imp = e.dll.decode(errors="replace")
+                    if imp.lower().startswith("cupti64"):
+                        cupti_imported.add(imp.lower())
+                    if (imp.lower() in payload_dlls or cf_backed.match(imp)
+                            or os_dll.match(imp)):
+                        continue
+                    unresolved.append(f"{base} -> {imp}")
+                pe.close()
+                del blob
+            check(bool(payload_dlls), f"PE-walked {len(payload_dlls)} payload DLLs")
+            check(not unresolved, f"every static import has a provider (unresolved: {unresolved[:5]})")
+            check(cupti_imported <= set(payload_dlls),
+                  f"imported CUPTI {sorted(cupti_imported)} vendored in torch/lib")
+            check(not any(d.split(" ", 1)[0] == "cuda-cupti" for d in index.get("depends", [])),
+                  "no cuda-cupti dependency (CUPTI is vendored)")
+            vendored_nv = [b for b in payload_dlls
+                           if _re3.match(r"^(cupti64_[\d.]+|nvtoolsext64_1)\.dll$", b)]
+            if vendored_nv:
+                lic_names = [n for n in infonames if n.startswith("info/licenses/")]
+                check(any("license" in n.lower() and "nvidia" in n.lower() for n in lic_names),
+                      f"NVIDIA EULA in info/licenses for vendored {vendored_nv} ({lic_names})")
+                check("LicenseRef-NVIDIA" in index.get("license", ""),
+                      f"license expression declares vendored NVIDIA DLLs ({index.get('license')!r})")
             bad_lib = [n for n in members if n.endswith((
                 "dnnl.lib", "libprotobuf.lib", "XNNPACK.lib", "fbgemm.lib", "asmjit.lib"))]
             check(not bad_lib, f"dead .lib stripped {bad_lib[:3]}")
