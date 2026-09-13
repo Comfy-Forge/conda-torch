@@ -21,10 +21,12 @@ Three stages, each fatal:
              failure this gates.
   2. RESOLVE every DT_NEEDED of every ELF in the environment's lib/ and
              site-packages/torch/lib is resolved with ldd, as the loader
-             would. Anything reported "not found" fails the gate, EXCEPT the
-             two sonames a GPU-less machine legitimately lacks
-             (libcuda.so.1, libnvidia-ml.so.1 -- shipped by the NVIDIA
-             driver, never by conda; see DRIVER_PROVIDED).
+             would. Anything reported "not found" fails the gate, with two
+             named exceptions: the sonames a GPU-less machine legitimately
+             lacks (libcuda.so.1, libnvidia-ml.so.1 -- shipped by the NVIDIA
+             driver, never by conda) and a soname needed ONLY by nvshmem's
+             dlopen'd transport/bootstrap plugins, whose absence nvshmem
+             tolerates by design. Both are reported, never silent.
   3. IMPORT  `import torch`, a CPU matmul, torch.cuda.is_available() (False
              is the right answer without a GPU, raising is not), and a few
              submodules. Optionally a consumer package is solved on top and
@@ -60,6 +62,15 @@ HERE = Path(__file__).resolve().parent
 # every CUDA-linked library; that is the expected state of the machine, not
 # a defect in the artifact. Everything else must resolve.
 DRIVER_PROVIDED = {"libcuda.so.1", "libnvidia-ml.so.1"}
+
+# nvshmem probes its transports at run time: nvshmem_bootstrap_*/transport_*
+# are dlopen'd opportunistically and an absent one is a capability that is
+# simply not offered, never a load failure of anything torch links. They are
+# the one class of object allowed to NEED something the env does not have
+# (torch_repack.py drops the plugins whose dependencies are unobtainable;
+# one that survives because the env COULD supply the soname -- an MPI
+# bootstrap next to conda-forge openmpi -- is legitimate).
+OPTIONAL_PLUGIN = re.compile(r"^nvshmem_(transport|bootstrap)_")
 
 ARCH_OF = {"linux-64": "x86_64", "linux-aarch64": "aarch64"}
 
@@ -116,7 +127,7 @@ def elf_audit(prefix: Path, out_json: Path | None) -> list[str]:
     would (ldd honours DT_RPATH/$ORIGIN exactly as ld.so does). Returns the
     unresolved ones, driver-provided sonames excluded."""
     roots = [prefix / "lib"]
-    roots += list(prefix.glob("lib/python3.*/site-packages/torch/lib"))
+    roots += sorted({p.resolve() for p in prefix.glob("lib/python3.*/site-packages/torch/lib")})
     seen: dict[str, list[str]] = {}
     scanned = 0
     for root in roots:
@@ -135,16 +146,23 @@ def elf_audit(prefix: Path, out_json: Path | None) -> list[str]:
                 if m:
                     seen.setdefault(m.group(1), []).append(so.name)
     log(f"ELF audit: scanned {scanned} objects under {[str(r) for r in roots]}")
+    fatal = []
     for soname, users in sorted(seen.items()):
-        kind = "driver-provided (expected on a GPU-less runner)" \
-            if soname in DRIVER_PROVIDED else "UNRESOLVED"
-        log(f"  {soname}: {kind}; needed by {len(users)} object(s), e.g. {users[:3]}")
+        if soname in DRIVER_PROVIDED:
+            kind = "driver-provided (expected on a GPU-less runner)"
+        elif all(OPTIONAL_PLUGIN.match(u) for u in users):
+            kind = "optional nvshmem plugin dependency (dlopen'd, absence tolerated)"
+        else:
+            kind = "UNRESOLVED"
+            fatal.append(soname)
+        log(f"  {soname}: {kind}; needed by {len(users)} object(s), e.g. {sorted(set(users))[:3]}")
     if out_json is not None:
         out_json.write_text(json.dumps(
             {"scanned": scanned,
              "unresolved": {k: sorted(set(v)) for k, v in seen.items()},
+             "fatal": fatal,
              "driver_provided": sorted(DRIVER_PROVIDED)}, indent=2, sort_keys=True) + "\n")
-    return sorted(set(seen) - DRIVER_PROVIDED)
+    return sorted(set(fatal))
 
 
 def main() -> None:

@@ -1852,10 +1852,21 @@ def nvidia_eula(flavour: str, version_hint: str | None) -> dict[str, bytes]:
 # has no nvshmem at all — verified 404)
 # --------------------------------------------------------------------------
 
-# sonames a repacked nvshmem lib may legitimately NEED without a mapping
+# sonames a repacked nvshmem lib may legitimately NEED without a mapping:
+# the C runtime, the CUDA runtime/driver, and nvshmem's own libraries.
+# ANCHORED at the soname boundary on purpose -- an unanchored alternation
+# matches by prefix, so `libm` accepted `libmpi.so.40` and shipped
+# nvshmem_bootstrap_mpi.so.3 instead of dropping it as the optional plugin
+# it is (found 2026-09-13 by the linux clean-environment gate, which saw
+# the unresolvable NEED in a real installed env; the same false accept
+# would have admitted anything starting with these prefixes).
+# libnvshmem* keeps its prefix form: the family really is a prefix
+# (libnvshmem_host.so.3, libnvshmem_device.a ...).
 NVSHMEM_OK_NEEDED = re.compile(
-    r"^(libc|libm|libdl|librt|libpthread|ld-linux|libgcc_s|libstdc\+\+"
-    r"|libcudart|libcuda|libnvidia-ml|libnvshmem)")
+    r"^(?:(?:libc|libm|libdl|librt|libpthread|libgcc_s|libstdc\+\+"
+    r"|libcuda|libcudart|libnvidia-ml)\.so(?:\.\d+)*$"
+    r"|ld-linux[\w.+-]*\.so(?:\.\d+)*$"
+    r"|libnvshmem[\w.+-]*\.so(?:\.\d+)*$)")
 
 
 def pypi_wheel_url(pypi_name: str, version: str, want: list[str]) -> tuple[str, str]:
