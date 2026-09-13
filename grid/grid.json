@@ -12,9 +12,9 @@
   "core_entries": 87,
   "conda_only_entries": 8,
   "hole_entries": 13,
-  "records_mirror": 164,
-  "records_repack": 286,
-  "repack_libtorch_pkgs": 63,
+  "records_mirror": 151,
+  "records_repack": 339,
+  "repack_libtorch_pkgs": 70,
   "mirror_pytorch_files": 164,
   "mirror_libtorch_files": 38,
   "core_conda_files": 551,
@@ -30,22 +30,22 @@
  },
  "per_platform": {
   "linux-64": {
-   "entries": 32,
-   "mirror_recs": 58,
+   "entries": 34,
+   "mirror_recs": 68,
    "repack_recs": 109,
    "repack_libtorch": 24,
    "holes": 2
   },
   "linux-aarch64": {
-   "entries": 28,
-   "mirror_recs": 53,
-   "repack_recs": 93,
-   "repack_libtorch": 21,
+   "entries": 31,
+   "mirror_recs": 15,
+   "repack_recs": 146,
+   "repack_libtorch": 28,
    "holes": 5
   },
   "win-64": {
-   "entries": 27,
-   "mirror_recs": 53,
+   "entries": 30,
+   "mirror_recs": 68,
    "repack_recs": 84,
    "repack_libtorch": 18,
    "holes": 6
@@ -729,64 +729,88 @@
    "flavour": "cu126",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "39",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.6.0-cuda126_generic_py39_hbb20a00_204.conda",
      "pytorch_sha256": "073ba87d1712574a36a0d4a67e8c1da31d8089c792a779f92257b3040d9f798f",
      "pytorch_size": 24205715,
      "variant": "generic",
      "libtorch_file": "libtorch-2.6.0-cuda126_generic_h5977fb4_204.conda",
      "libtorch_sha256": "68165a9fa98c8561814472fa9f01ef177600997f0145bd551ccc415bc573f70a",
-     "libtorch_size": 509389460
+     "libtorch_size": 509389460,
+     "wheel_url": "https://download.pytorch.org/whl/cu126/torch-2.6.0%2Bcu126-cp39-cp39-linux_aarch64.whl",
+     "wheel_sha256": "2eea662d2d4ba57db2117d510c1baa47f49b1f327f9e91cf3a29d38f298d7f21",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.6.0-cuda126_generic_py310_hcbaa44a_204.conda",
      "pytorch_sha256": "3ac392ef640b5fd01fdb2269ad46f05761af13e79776985f7574061c76e4236c",
      "pytorch_size": 24415846,
      "variant": "generic",
      "libtorch_file": "libtorch-2.6.0-cuda126_generic_h5977fb4_204.conda",
      "libtorch_sha256": "68165a9fa98c8561814472fa9f01ef177600997f0145bd551ccc415bc573f70a",
-     "libtorch_size": 509389460
+     "libtorch_size": 509389460,
+     "wheel_url": "https://download.pytorch.org/whl/cu126/torch-2.6.0%2Bcu126-cp310-cp310-linux_aarch64.whl",
+     "wheel_sha256": "48775b8544e6705aa72256117f33c5f0c3c1ab51cb7abef1989dcfc3cf2e6500",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.6.0-cuda126_generic_py311_h2eb7984_204.conda",
      "pytorch_sha256": "0d98b7201d0c8dca66169faaa4a6a09642c436143599531a7d3cefda32a59e3c",
      "pytorch_size": 28439942,
      "variant": "generic",
      "libtorch_file": "libtorch-2.6.0-cuda126_generic_h5977fb4_204.conda",
      "libtorch_sha256": "68165a9fa98c8561814472fa9f01ef177600997f0145bd551ccc415bc573f70a",
-     "libtorch_size": 509389460
+     "libtorch_size": 509389460,
+     "wheel_url": "https://download.pytorch.org/whl/cu126/torch-2.6.0%2Bcu126-cp311-cp311-linux_aarch64.whl",
+     "wheel_sha256": "d4809b188f5c9b9753f7578085b79ae1f5d9c36a3fffc122e83e446ecf251325",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.6.0-cuda126_generic_py312_h5ed724c_204.conda",
      "pytorch_sha256": "8126a0247c106ddb31cec68eea825ab66373db574e6d9e64dd365ed3f76bb898",
      "pytorch_size": 28045304,
      "variant": "generic",
      "libtorch_file": "libtorch-2.6.0-cuda126_generic_h5977fb4_204.conda",
      "libtorch_sha256": "68165a9fa98c8561814472fa9f01ef177600997f0145bd551ccc415bc573f70a",
-     "libtorch_size": 509389460
+     "libtorch_size": 509389460,
+     "wheel_url": "https://download.pytorch.org/whl/cu126/torch-2.6.0%2Bcu126-cp312-cp312-linux_aarch64.whl",
+     "wheel_sha256": "993e0e99c472df1d2746c3233ef8e88d992904fe75b8996a2c15439c43ff46c4",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.6.0-cuda126_generic_py313_h982c678_204.conda",
      "pytorch_sha256": "5312c11f2fff98161c195b506db567826cd12f1f06d7c0817d179ef4f7e62a28",
      "pytorch_size": 28175093,
      "variant": "generic",
      "libtorch_file": "libtorch-2.6.0-cuda126_generic_h5977fb4_204.conda",
      "libtorch_sha256": "68165a9fa98c8561814472fa9f01ef177600997f0145bd551ccc415bc573f70a",
-     "libtorch_size": 509389460
+     "libtorch_size": 509389460,
+     "wheel_url": "https://download.pytorch.org/whl/cu126/torch-2.6.0%2Bcu126-cp313-cp313-linux_aarch64.whl",
+     "wheel_sha256": "e7913d9dcca60d352b296adf566ae9bb84c9e4d27414cf070b78a84c0a0ceb20",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "39",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.6.0",
@@ -3331,7 +3355,7 @@
     "donor_python": "39",
     "status": "pending"
    },
-   "action": "mixed",
+   "action": "repack",
    "records": [
     {
      "python": "39",
@@ -3343,47 +3367,63 @@
     },
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.8.0-cuda129_generic_py310_h140a03b_202.conda",
      "pytorch_sha256": "576b8e3146f82d4981f7c72cf689fae98d83f6d9d25c26a8369a0506721e9ce6",
      "pytorch_size": 20261442,
      "variant": "generic",
      "libtorch_file": "libtorch-2.8.0-cuda129_generic_hffbb26a_202.conda",
      "libtorch_sha256": "ea721ddbeef8056ab77f300e26839bca5272a651f378bc270337e92a36bdcc66",
-     "libtorch_size": 861047098
+     "libtorch_size": 861047098,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.8.0%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "72156354c39c08f3451acb50a6ecd4178d745670ad8651b5c796eaace558ff0f",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.8.0-cuda129_generic_py311_h53fd0d7_202.conda",
      "pytorch_sha256": "eff620526ce527940f4f2c0bb4948c64fe19563afc7e9d35e8097eaa47e0984f",
      "pytorch_size": 24593178,
      "variant": "generic",
      "libtorch_file": "libtorch-2.8.0-cuda129_generic_hffbb26a_202.conda",
      "libtorch_sha256": "ea721ddbeef8056ab77f300e26839bca5272a651f378bc270337e92a36bdcc66",
-     "libtorch_size": 861047098
+     "libtorch_size": 861047098,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.8.0%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "d5a210e351ab0c3acbac18c7397bc66ffd897d5000351e8ce9a21badf7f56b85",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.8.0-cuda129_generic_py312_hf57ddf8_202.conda",
      "pytorch_sha256": "00ecd467a089fda40a9f713e2760090e9515a4b3b79b510913b54196df0b50b4",
      "pytorch_size": 24192318,
      "variant": "generic",
      "libtorch_file": "libtorch-2.8.0-cuda129_generic_hffbb26a_202.conda",
      "libtorch_sha256": "ea721ddbeef8056ab77f300e26839bca5272a651f378bc270337e92a36bdcc66",
-     "libtorch_size": 861047098
+     "libtorch_size": 861047098,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.8.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "692fe6e513b667f789a543fa9b1baba58e77a46d5c8629764ca0c00a56823e1f",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.8.0-cuda129_generic_py313_h2ae6518_202.conda",
      "pytorch_sha256": "287ff57000e45fad648dff897094fc032f21f342659af486bfbd33a3d40dfc4a",
      "pytorch_size": 24401558,
      "variant": "generic",
      "libtorch_file": "libtorch-2.8.0-cuda129_generic_hffbb26a_202.conda",
      "libtorch_sha256": "ea721ddbeef8056ab77f300e26839bca5272a651f378bc270337e92a36bdcc66",
-     "libtorch_size": 861047098
+     "libtorch_size": 861047098,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.8.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "ad2d64316635e7ab06f6c973a252526d59a92a2045825c102f876914a72304d0",
+     "libtorch_donor": false,
+     "status": "pending"
     }
    ]
   },
@@ -3514,51 +3554,67 @@
     "donor_python": "314",
     "status": "pending"
    },
-   "action": "mixed",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.9.1-cuda129_generic_py310_h002983a_205.conda",
      "pytorch_sha256": "24007c8fac955c5c3bdf4beca633cefef66f94952c149dae65364bbce2103875",
      "pytorch_size": 21037025,
      "variant": "generic",
      "libtorch_file": "libtorch-2.9.1-cuda129_generic_hfa0d827_205.conda",
      "libtorch_sha256": "9f555911a92dce5e28d6375c34c6f9f46a5c7474a16bc5963602996fe60ea034",
-     "libtorch_size": 867821872
+     "libtorch_size": 867821872,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "aa843d96289c3211a640d381aac50b1903b6a6f7367e7e04aacfb34732dced64",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.9.1-cuda129_generic_py311_ha6ae8f7_205.conda",
      "pytorch_sha256": "719727624c00d537bf235b077cc97ec327d986adcf6b3202a59939ba2f06ed7f",
      "pytorch_size": 25496151,
      "variant": "generic",
      "libtorch_file": "libtorch-2.9.1-cuda129_generic_hfa0d827_205.conda",
      "libtorch_sha256": "9f555911a92dce5e28d6375c34c6f9f46a5c7474a16bc5963602996fe60ea034",
-     "libtorch_size": 867821872
+     "libtorch_size": 867821872,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "5a990644f98b4db59630a5b9cf41711294fe621131dbc41e1488f3a665c8b320",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.9.1-cuda129_generic_py312_h5b0cc2b_205.conda",
      "pytorch_sha256": "cdb280a53b0b29ac686d1e80c739fa97c8ab82c42bdc7c4705ec00999f50a93e",
      "pytorch_size": 25166113,
      "variant": "generic",
      "libtorch_file": "libtorch-2.9.1-cuda129_generic_hfa0d827_205.conda",
      "libtorch_sha256": "9f555911a92dce5e28d6375c34c6f9f46a5c7474a16bc5963602996fe60ea034",
-     "libtorch_size": 867821872
+     "libtorch_size": 867821872,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "c501c66fe5b0e2fc70f9d8a18e17a265f92ad1d1009dba03f5938d2f15a9066f",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.9.1-cuda129_generic_py313_hc6fbc4b_205.conda",
      "pytorch_sha256": "60ba1cd72e78b308347f8d39afb38ed99f097b8f74ac6c7a5036887a41c48840",
      "pytorch_size": 25206284,
      "variant": "generic",
      "libtorch_file": "libtorch-2.9.1-cuda129_generic_hfa0d827_205.conda",
      "libtorch_sha256": "9f555911a92dce5e28d6375c34c6f9f46a5c7474a16bc5963602996fe60ea034",
-     "libtorch_size": 867821872
+     "libtorch_size": 867821872,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.9.1%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "ab44cf28e6ca2df679f0845fb4b950c81834431218840ca01c0a1583892a0986",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
@@ -3647,64 +3703,88 @@
    "flavour": "cu129",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda129_generic_py310_h7062f17_205.conda",
      "pytorch_sha256": "6c41539fc04fec695e9b9c5e42d573e0af2971947893b694b0b8176ee60eb597",
      "pytorch_size": 20224597,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda129_generic_h3550501_205.conda",
      "libtorch_sha256": "0e74ea34868ebf88d1098505c4058d0fb0558e2086dd09cd183206276f4007ca",
-     "libtorch_size": 380337203
+     "libtorch_size": 380337203,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "6c7e5664a9cb809920d89c5200a832555d68faa5a00a7056f4365971723b685e",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda129_generic_py311_h129ec23_205.conda",
      "pytorch_sha256": "5764919d271b96873680e35bf9353e8a4020eef58a76b223b5841f374d34c073",
      "pytorch_size": 24149793,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda129_generic_h8b54905_205.conda",
      "libtorch_sha256": "9aba060f91760878be9fc9fe60339aaea3469b25c21aab9cfbb9064c422074ea",
-     "libtorch_size": 797104959
+     "libtorch_size": 797104959,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "9e28f146e14173ebe2302088c5745b8c540171ffe4b4225bfbbd8639f7962514",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda129_generic_py312_h587896a_205.conda",
      "pytorch_sha256": "81d6973e7c598a0a3c63d42dceb0025ba866de6eb6565da371ac27742a86b5cf",
      "pytorch_size": 24090070,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda129_generic_h3550501_205.conda",
      "libtorch_sha256": "0e74ea34868ebf88d1098505c4058d0fb0558e2086dd09cd183206276f4007ca",
-     "libtorch_size": 380337203
+     "libtorch_size": 380337203,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "895501ca59670503c00aeca56aa864fe59ebb11bdc919e779683d5ae263a171a",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda129_generic_py313_h74a0c47_205.conda",
      "pytorch_sha256": "b8328abdab7040f9a239146327d7a06c8d848482e1d4286ecf4db87634612d00",
      "pytorch_size": 24444498,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda129_generic_h3550501_205.conda",
      "libtorch_sha256": "0e74ea34868ebf88d1098505c4058d0fb0558e2086dd09cd183206276f4007ca",
-     "libtorch_size": 380337203
+     "libtorch_size": 380337203,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "08dc9eb950efbf2b65a7973e6d00c8c770d697140296841dc3d86cbc8d372a76",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda129_generic_py314_h69b1a48_205.conda",
      "pytorch_sha256": "b761c875c981404bc9cb307c6e977eab7d93454b8ce2bd47cb446bdbbd30d421",
      "pytorch_size": 25090015,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda129_generic_h3550501_205.conda",
      "libtorch_sha256": "0e74ea34868ebf88d1098505c4058d0fb0558e2086dd09cd183206276f4007ca",
-     "libtorch_size": 380337203
+     "libtorch_size": 380337203,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "e9649b8b5cbeee7a237d08c81390bb02f20cab2caa1a8e4f4d96bae3d26a2836",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "310",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.10.0",
@@ -3783,64 +3863,88 @@
    "flavour": "cu129",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda129_generic_py310_h2281be1_202.conda",
      "pytorch_sha256": "c77e9095e8f0141162eaf4709f7949c10e891355ec6ff642ef582ab73c6be9ef",
      "pytorch_size": 20782800,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda129_generic_hb49e1e8_202.conda",
      "libtorch_sha256": "4404d76293b69a3ec3958beffb6c3e5e1a7995dd12d4d234ad2d7d5bed8079b3",
-     "libtorch_size": 785787912
+     "libtorch_size": 785787912,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "c0508e2ff64722b2f1fc51c62f3c745efef66f8b04378aac3e4f2435ed320542",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda129_generic_py311_h7f65a4f_202.conda",
      "pytorch_sha256": "e6e0d0954aab445619053c46a522257dbe75f17d76e06fb6b63ac3d1c4ea3c2a",
      "pytorch_size": 25010410,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda129_generic_hb49e1e8_202.conda",
      "libtorch_sha256": "4404d76293b69a3ec3958beffb6c3e5e1a7995dd12d4d234ad2d7d5bed8079b3",
-     "libtorch_size": 785787912
+     "libtorch_size": 785787912,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "ae3cf4a1082fbfbed7409dcfe9f767d9124da4730e2bb8857f1656fa490d8d69",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda129_generic_py312_h55e32eb_202.conda",
      "pytorch_sha256": "68faf6034d1c67776ce90a6fcfae48ea5df0038e73fc3f564feef3c8307a8b43",
      "pytorch_size": 24777411,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda129_generic_hb49e1e8_202.conda",
      "libtorch_sha256": "4404d76293b69a3ec3958beffb6c3e5e1a7995dd12d4d234ad2d7d5bed8079b3",
-     "libtorch_size": 785787912
+     "libtorch_size": 785787912,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "2d053729aa4ca5daa466dc1418fd3770f221017cb94d0d5c0c60c15b2eeedffd",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda129_generic_py313_h6762949_202.conda",
      "pytorch_sha256": "7814b8816cd7de860b9b93e7667118fa191095e67ccf7cc1f20c9a6cce1dfe0f",
      "pytorch_size": 25135887,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda129_generic_hb49e1e8_202.conda",
      "libtorch_sha256": "4404d76293b69a3ec3958beffb6c3e5e1a7995dd12d4d234ad2d7d5bed8079b3",
-     "libtorch_size": 785787912
+     "libtorch_size": 785787912,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "20f9a7223804fbc2b39253933a2704756f1bd80529a093fe6e6cbef3341a303e",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda129_generic_py314_h213226b_202.conda",
      "pytorch_sha256": "1238b554ce3fcdea7185a402b5057d7aef247ffccb331944caaf03603c6f4012",
      "pytorch_size": 25973688,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda129_generic_hcd87bfb_202.conda",
      "libtorch_sha256": "4eeeef2765b9fbf91df5d3c17deab1c046ba8db1b874aa6d09350ceecaf85177",
-     "libtorch_size": 292588253
+     "libtorch_size": 292588253,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "c0d6d74117e81b5ac6aac29241f045f8eccca8ac3ac950b4e80542bfbd7c19fd",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "310",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.11.0",
@@ -3919,64 +4023,88 @@
    "flavour": "cu129",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda129_generic_py310_h2281be1_200.conda",
      "pytorch_sha256": "be30feb62a27f18b4de5abdb905a4195effede4ce0fc4ffd717523d765b18382",
      "pytorch_size": 21390459,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda129_generic_hb49e1e8_200.conda",
      "libtorch_sha256": "547aa8af6eb0f6816ada08b782223677973cec76d8fc0248524b272f30debdf0",
-     "libtorch_size": 799652338
+     "libtorch_size": 799652338,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.12.1%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "a8bc9051826fed34fb69e191eb77a7a0631414a4aafddfb4c1cb09a6bcea7044",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda129_generic_py311_h7f65a4f_200.conda",
      "pytorch_sha256": "86fedcd887feb885f4aa4acb356def1da2f8497a325fd5dd301d754eabce98ce",
      "pytorch_size": 25790432,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda129_generic_hb49e1e8_200.conda",
      "libtorch_sha256": "547aa8af6eb0f6816ada08b782223677973cec76d8fc0248524b272f30debdf0",
-     "libtorch_size": 799652338
+     "libtorch_size": 799652338,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.12.1%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "d1d2fb31e7e013404133f5156aab9b0fc784d17c2c9a5028cb083cb80f6c4cf9",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda129_generic_py312_h55e32eb_200.conda",
      "pytorch_sha256": "b4eb2bdbb6192ef6a9dc9adf8ee21abede9186f48a0e934145e46d522b9ba436",
      "pytorch_size": 25551739,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda129_generic_hb49e1e8_200.conda",
      "libtorch_sha256": "547aa8af6eb0f6816ada08b782223677973cec76d8fc0248524b272f30debdf0",
-     "libtorch_size": 799652338
+     "libtorch_size": 799652338,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.12.1%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "d86d290c8c42df640cae8a74a10b3da4b29f8d7ba862d06db6a918fe3ab2310f",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda129_generic_py313_h6762949_200.conda",
      "pytorch_sha256": "ef653bf4f4d02a020a526fb63305b305d09bb78b1f93300fd1548c1cbfd1fd38",
      "pytorch_size": 25950725,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda129_generic_hb49e1e8_200.conda",
      "libtorch_sha256": "547aa8af6eb0f6816ada08b782223677973cec76d8fc0248524b272f30debdf0",
-     "libtorch_size": 799652338
+     "libtorch_size": 799652338,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.12.1%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "dfac629c7e7a9a347170631835c0a6b4f062c622102bb23dce595f3291e8c4f3",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda129_generic_py314_h213226b_200.conda",
      "pytorch_sha256": "47f1adac8910af951aa00f6c9de5ea503de7a21178b65929506ec388b4758abb",
      "pytorch_size": 26664224,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda129_generic_hcd87bfb_200.conda",
      "libtorch_sha256": "fad3feffe100b566b048aa053275fef4865a459eab67ccef20b1c54a16849026",
-     "libtorch_size": 296043926
+     "libtorch_size": 296043926,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.12.1%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "74a2a0a8da32b5ad6e9cd912745f97e001d3c6009badb2fc0b9b4c455f682e9a",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "310",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.12.1",
@@ -4071,62 +4199,82 @@
     "donor_python": "315",
     "status": "pending"
    },
-   "action": "mixed",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda129_generic_py310_h2013ee2_202.conda",
      "pytorch_sha256": "5c735d6e015dd95d9dd9fa1ee9af92adbfb5c17d299235aa28e64b087e68b952",
      "pytorch_size": 22679777,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda129_generic_h7942bbf_202.conda",
      "libtorch_sha256": "9c903b3bcf63bd82a772ac49682c8a2f0b9e0aefb3673a65fa3080352d1035b4",
-     "libtorch_size": 805540276
+     "libtorch_size": 805540276,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "8995dd0bfc86650fcfdd3430e58f65bbb580fb6891f6a82f3c364424af6fcd7e",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda129_generic_py311_h9288d1c_202.conda",
      "pytorch_sha256": "6e149922a5886efb372f1b60eb2c3f1b1c4657f81f5f2aff31405130514a596f",
      "pytorch_size": 27494575,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda129_generic_h2522782_202.conda",
      "libtorch_sha256": "f98f6b09cb514a9c5505299472baf7d992d94d0c8da3e20d7d81d33717c48040",
-     "libtorch_size": 301567583
+     "libtorch_size": 301567583,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "f47dd63ad198aee205ddb90393e574d19b4bb83185f75e71d63ed7634cb47bad",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda129_generic_py312_h42e0602_202.conda",
      "pytorch_sha256": "053a5465148851047125971211195b6552d30ddfcc508f4dfeb888c530126329",
      "pytorch_size": 27254105,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda129_generic_h2522782_202.conda",
      "libtorch_sha256": "f98f6b09cb514a9c5505299472baf7d992d94d0c8da3e20d7d81d33717c48040",
-     "libtorch_size": 301567583
+     "libtorch_size": 301567583,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "4ee86fc2f4af36642751b95fecc7ba4ad18283f010c5a841208ecd850c22d48a",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda129_generic_py313_h8344fd1_202.conda",
      "pytorch_sha256": "a7ac51b8a928a17ac69a7b601c0965b6b0b8cd4db01b435aea6b8d236bac37f4",
      "pytorch_size": 27631527,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda129_generic_h7942bbf_202.conda",
      "libtorch_sha256": "9c903b3bcf63bd82a772ac49682c8a2f0b9e0aefb3673a65fa3080352d1035b4",
-     "libtorch_size": 805540276
+     "libtorch_size": 805540276,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "cdb22a05563538d44a7e29d1d3cab5d37ffec103f76e949cc44722e462058a40",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda129_generic_py314_h1c6022f_202.conda",
      "pytorch_sha256": "a3af26ae5f1227b4cab62dfb9a3613f5216c51f5540b4da96d2211d83bd64ec4",
      "pytorch_size": 28439934,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda129_generic_h7942bbf_202.conda",
      "libtorch_sha256": "9c903b3bcf63bd82a772ac49682c8a2f0b9e0aefb3673a65fa3080352d1035b4",
-     "libtorch_size": 805540276
+     "libtorch_size": 805540276,
+     "wheel_url": "https://download.pytorch.org/whl/cu129/torch-2.13.0%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "f99236a28481941374b4379af7b71cd6954ffcf5a4c16e3267e2a94e26d42f79",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "315",
@@ -4374,64 +4522,88 @@
    "flavour": "cu130",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda130_generic_py310_hd81299e_205.conda",
      "pytorch_sha256": "686bfc6fd71a97c825e79c9a30b4457c6960b058f4fa5bb35c1b238b36cd9765",
      "pytorch_size": 20063751,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda130_generic_h3652b22_205.conda",
      "libtorch_sha256": "56aafb1e548e370ddf01789f82703ebfbb17ad942603533c5f23e2ae64f5b4db",
-     "libtorch_size": 468884502
+     "libtorch_size": 468884502,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "adfb2bca94f12a5baca6ccf9aa40d6c5b1259748ebb38938be670b07a24d4e15",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda130_generic_py311_h76a1c7c_205.conda",
      "pytorch_sha256": "29cdda0574bc68217f316024b88e9ab50fec6a2ff3f1be57d49254a8a63c3b3e",
      "pytorch_size": 24157706,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda130_generic_h3652b22_205.conda",
      "libtorch_sha256": "56aafb1e548e370ddf01789f82703ebfbb17ad942603533c5f23e2ae64f5b4db",
-     "libtorch_size": 468884502
+     "libtorch_size": 468884502,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "ea3239d544b2e569a8f47db5c7fa4fd42a2fe96aefb84bb1eda45ce213020fd2",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda130_generic_py312_hd2d43f0_205.conda",
      "pytorch_sha256": "62a0a44659a8bc524b0acb1b55a121db8c058e8befc1c9050dfa4400134a9bf8",
      "pytorch_size": 23915765,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda130_generic_h3652b22_205.conda",
      "libtorch_sha256": "56aafb1e548e370ddf01789f82703ebfbb17ad942603533c5f23e2ae64f5b4db",
-     "libtorch_size": 468884502
+     "libtorch_size": 468884502,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "4fc8f67637f4c92b989a07d80ffe755e79a3510ca02ebf23ce66396fb277c88d",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda130_generic_py313_hf30724a_205.conda",
      "pytorch_sha256": "9bb4debead467d408d829011fc67cbe01eaaa793126350d9c74d81fd959f3c93",
      "pytorch_size": 24270416,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda130_generic_h3652b22_205.conda",
      "libtorch_sha256": "56aafb1e548e370ddf01789f82703ebfbb17ad942603533c5f23e2ae64f5b4db",
-     "libtorch_size": 468884502
+     "libtorch_size": 468884502,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "75780283308df9fede371eeda01e9607c8862a1803a2f2f31a08a2c0deaed342",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.10.0-cuda130_generic_py314_h365112d_205.conda",
      "pytorch_sha256": "0c8e86fd90f361cfaeb2651e0a21279c4751c57418151a61c460608a6a49a598",
      "pytorch_size": 24941577,
      "variant": "generic",
      "libtorch_file": "libtorch-2.10.0-cuda130_generic_h3652b22_205.conda",
      "libtorch_sha256": "56aafb1e548e370ddf01789f82703ebfbb17ad942603533c5f23e2ae64f5b4db",
-     "libtorch_size": 468884502
+     "libtorch_size": 468884502,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.10.0%2Bcu130-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "18f87ae628c02f095f2e97756e4fa249ceef6ed6e87d5a3c79b5338abf842511",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "310",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.10.0",
@@ -4566,64 +4738,88 @@
    "flavour": "cu130",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda130_generic_py310_he0fe7b7_202.conda",
      "pytorch_sha256": "2f03742842029b9bf83784ffbae077bf63d7fc3177d78e2f4c5825ce32b04397",
      "pytorch_size": 20850675,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda130_generic_h4328193_202.conda",
      "libtorch_sha256": "83d392357e0c9e926e6180ab3926b495edc44aa248b0574951ef2e7fc81b8ce1",
-     "libtorch_size": 447415238
+     "libtorch_size": 447415238,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "4af01fad0822353e766770ff2c7d6bdc2cbcc2ac7fcd6da93a9e3c6f3f932b21",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda130_generic_py311_h2d8db97_202.conda",
      "pytorch_sha256": "7b159430b79351a5a76bbffbf39573d3094172d7a8a1f62351506235a41db594",
      "pytorch_size": 25058618,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda130_generic_h4328193_202.conda",
      "libtorch_sha256": "83d392357e0c9e926e6180ab3926b495edc44aa248b0574951ef2e7fc81b8ce1",
-     "libtorch_size": 447415238
+     "libtorch_size": 447415238,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "6304535e9e4cd1beeab449e407712602aa473a97e7b310dc5650ef50940bd94f",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda130_generic_py312_h6b5072e_202.conda",
      "pytorch_sha256": "fdb3d074309f3e9a31bdf30a31ee9573352fa38442d6b4bc9676056567b3f2b2",
      "pytorch_size": 24810744,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda130_generic_h4328193_202.conda",
      "libtorch_sha256": "83d392357e0c9e926e6180ab3926b495edc44aa248b0574951ef2e7fc81b8ce1",
-     "libtorch_size": 447415238
+     "libtorch_size": 447415238,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "252f237d417fac3ba59b1635815c1f035a8241f2af038f2c076ed430932d89f1",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda130_generic_py313_h8bc9ddc_202.conda",
      "pytorch_sha256": "8f6e9c0f301a58490b51eedb443e9f1dbbd9b87edc618aaffc48942e8d8598bb",
      "pytorch_size": 25202498,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda130_generic_h4328193_202.conda",
      "libtorch_sha256": "83d392357e0c9e926e6180ab3926b495edc44aa248b0574951ef2e7fc81b8ce1",
-     "libtorch_size": 447415238
+     "libtorch_size": 447415238,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "c3d60f79666b9101e3914a2e5dec2e81eac834e13cae0bcf59e94dc1a465f756",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.11.0-cuda130_generic_py314_h1da07bd_202.conda",
      "pytorch_sha256": "467562e935671c74f80a9d3d765cd34be916381717597eb728c967caf6008f55",
      "pytorch_size": 25936315,
      "variant": "generic",
      "libtorch_file": "libtorch-2.11.0-cuda130_generic_h4328193_202.conda",
      "libtorch_sha256": "83d392357e0c9e926e6180ab3926b495edc44aa248b0574951ef2e7fc81b8ce1",
-     "libtorch_size": 447415238
+     "libtorch_size": 447415238,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.11.0%2Bcu130-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "efcdfe08ec2c9db28b50cc7329fed0c90bb74fa6fbce0f7eb12e20db2279a40f",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "312",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.11.0",
@@ -4758,64 +4954,88 @@
    "flavour": "cu130",
    "platform": "linux-aarch64",
    "conda_only": false,
-   "action": "mirror",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda130_generic_py310_he0fe7b7_200.conda",
      "pytorch_sha256": "20d41ea806472dac22875378a9707249c0c38d06a8f6b01e9ae2cef59163d0bf",
      "pytorch_size": 21445028,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda130_generic_h4328193_200.conda",
      "libtorch_sha256": "0742a662e62af3e15a326d9927b62b6398fde5c4971a3863aeca178c80af49ff",
-     "libtorch_size": 457116875
+     "libtorch_size": 457116875,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.12.1%2Bcu130-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "fe0e04f34287aace6be33dd676307f9924108ad1a101c144e455a1eed0dc49e9",
+     "libtorch_donor": true,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda130_generic_py311_h2d8db97_200.conda",
      "pytorch_sha256": "6a574e080cf6876bfa77b46bded3f2ad9d39da94bbaa8e08602f8f47ec2bada7",
      "pytorch_size": 25870904,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda130_generic_h4328193_200.conda",
      "libtorch_sha256": "0742a662e62af3e15a326d9927b62b6398fde5c4971a3863aeca178c80af49ff",
-     "libtorch_size": 457116875
+     "libtorch_size": 457116875,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.12.1%2Bcu130-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "1a4cd0c01ce52e4267147f0d860951ef8e937bafff613a9b5047010b5aacab11",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda130_generic_py312_h6b5072e_200.conda",
      "pytorch_sha256": "a53597a96470ac3b68180ae62a5471c3bdcd41e7ad2c3e8bad096d28d9a717cd",
      "pytorch_size": 25630722,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda130_generic_h4328193_200.conda",
      "libtorch_sha256": "0742a662e62af3e15a326d9927b62b6398fde5c4971a3863aeca178c80af49ff",
-     "libtorch_size": 457116875
+     "libtorch_size": 457116875,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.12.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "2d3e87d41ffb340ddf8c99e2a690a29feea9f5271459dd57621cd11317a434f2",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda130_generic_py313_h8bc9ddc_200.conda",
      "pytorch_sha256": "5cafcd1cbf8562c212ab3b99018aa75a4ef410c8b3dbaee272948dc40a361479",
      "pytorch_size": 26026609,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda130_generic_h4328193_200.conda",
      "libtorch_sha256": "0742a662e62af3e15a326d9927b62b6398fde5c4971a3863aeca178c80af49ff",
-     "libtorch_size": 457116875
+     "libtorch_size": 457116875,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.12.1%2Bcu130-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "2a2bb858316615b90b14ff27d0c732d5af85d066f5ee7bf81fad2c9215839be7",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.12.1-cuda130_generic_py314_h1da07bd_200.conda",
      "pytorch_sha256": "46688459ca322948021c689eff157a2f87d0235c08d49f086fbf3dda0b8870d0",
      "pytorch_size": 26781142,
      "variant": "generic",
      "libtorch_file": "libtorch-2.12.1-cuda130_generic_h4328193_200.conda",
      "libtorch_sha256": "0742a662e62af3e15a326d9927b62b6398fde5c4971a3863aeca178c80af49ff",
-     "libtorch_size": 457116875
+     "libtorch_size": 457116875,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.12.1%2Bcu130-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "d6770341450d042a2998be19b5f7e431ab27281d356148a6eba659f5afff7c3e",
+     "libtorch_donor": false,
+     "status": "pending"
     }
-   ]
+   ],
+   "repack_libtorch": {
+    "donor_python": "310",
+    "status": "pending"
+   }
   },
   {
    "torch_version": "2.12.1",
@@ -4966,62 +5186,82 @@
     "donor_python": "315",
     "status": "pending"
    },
-   "action": "mixed",
+   "action": "repack",
    "records": [
     {
      "python": "310",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda130_generic_py310_hd9a84a6_202.conda",
      "pytorch_sha256": "e085e3c47cacb509933e85a40e3bde98931088942147799668ca6bb283e05e95",
      "pytorch_size": 22637728,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda130_generic_h05dcb18_202.conda",
      "libtorch_sha256": "ccb28cf3d57c12be89fb91ba4266590f250d5a58e62fa9389630f836267fa708",
-     "libtorch_size": 508375788
+     "libtorch_size": 508375788,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp310-cp310-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "cd11e8876fce3cbc941c576c9f87730f0ff2ca96a9d3e1aa6913bf48304c8bcb",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "311",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda130_generic_py311_h10936dd_202.conda",
      "pytorch_sha256": "7c498abd699377797625fb3b60131293fb29f60d869ed80432ce63f465b70be2",
      "pytorch_size": 27363362,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda130_generic_h05dcb18_202.conda",
      "libtorch_sha256": "ccb28cf3d57c12be89fb91ba4266590f250d5a58e62fa9389630f836267fa708",
-     "libtorch_size": 508375788
+     "libtorch_size": 508375788,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp311-cp311-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "b8a6b58c0176dd532254f6622fb1dffef6b38ad7cb67fcd0beb673066c8c710c",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "312",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda130_generic_py312_hf9e49e3_202.conda",
      "pytorch_sha256": "9002961b0109dd7f472866c940967bbaa54bf7b01c325b64abf9af2c69ca64f5",
      "pytorch_size": 27142422,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda130_generic_h05dcb18_202.conda",
      "libtorch_sha256": "ccb28cf3d57c12be89fb91ba4266590f250d5a58e62fa9389630f836267fa708",
-     "libtorch_size": 508375788
+     "libtorch_size": 508375788,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": "5ebd552c887e707c8e64927aceb8377ca2e81588c4e7494bcd23cb8ac0aca14d",
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "313",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda130_generic_py313_haa81db3_202.conda",
      "pytorch_sha256": "9bc083685e275c035f38875fa15c97c3a835f231cc4264516c2863f4d0fe2279",
      "pytorch_size": 27547212,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda130_generic_h05dcb18_202.conda",
      "libtorch_sha256": "ccb28cf3d57c12be89fb91ba4266590f250d5a58e62fa9389630f836267fa708",
-     "libtorch_size": 508375788
+     "libtorch_size": 508375788,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp313-cp313-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": null,
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "314",
-     "action": "mirror",
+     "action": "repack",
      "pytorch_file": "pytorch-2.13.0-cuda130_generic_py314_h27fe179_202.conda",
      "pytorch_sha256": "70218fed90c7415c2db59b74bd9dda0c75f28eb39f64e015d5d46a1622913f6b",
      "pytorch_size": 28351627,
      "variant": "generic",
      "libtorch_file": "libtorch-2.13.0-cuda130_generic_h05dcb18_202.conda",
      "libtorch_sha256": "ccb28cf3d57c12be89fb91ba4266590f250d5a58e62fa9389630f836267fa708",
-     "libtorch_size": 508375788
+     "libtorch_size": 508375788,
+     "wheel_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp314-cp314-manylinux_2_28_aarch64.whl",
+     "wheel_sha256": null,
+     "libtorch_donor": false,
+     "status": "pending"
     },
     {
      "python": "315",
@@ -5797,5 +6037,6 @@
     }
    ]
   }
- ]
+ ],
+ "aarch64_reenumerated": "2026-09-13"
 }
