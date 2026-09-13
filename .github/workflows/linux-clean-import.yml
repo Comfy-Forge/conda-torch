@@ -1,0 +1,105 @@
+name: linux-clean-import
+
+# The linux clean-environment gate, run against the LIVE channel for one
+# cell: solve `pytorch <version> cuda<NNN>_repack_py<XY>_*` from
+# comfy-forge.github.io/conda-torch + conda-forge into a fresh env on a
+# stock runner of the TARGET architecture, resolve every DT_NEEDED soname
+# in the installed env (tools/linux_gate.py), and `import torch`.
+#
+# Why it exists: a linux repack is assembled on an x86 runner by unzipping
+# a wheel and rewriting ELF headers -- the pipeline never loads what it
+# builds. The structural checks all read bytes. On linux-aarch64 the gap
+# was total: no aarch64 repack had ever been imported in a clean
+# environment anywhere before 2026-09-13 (the same blind spot the win-64
+# gate closed on Windows). GitHub's ubuntu-24.04-arm runners make the real
+# check free, so there is no reason to infer it.
+#
+# Dispatch-only, and deliberately NOT wired into repack-torch.yml's publish
+# path: unlike win-64, nothing here is known to be defective, and a new
+# blocking job on a 100+ cell fleet is a change to make with evidence, not
+# with a hunch. Run it over cells after they publish.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "torch version (e.g. 2.11.0)"
+        default: "2.11.0"
+      flavour:
+        description: "CUDA flavour (e.g. cu130)"
+        default: "cu130"
+      python:
+        description: "python minor (e.g. 3.12)"
+        default: "3.12"
+      platform:
+        description: "conda subdir (linux-aarch64 or linux-64)"
+        default: "linux-aarch64"
+      build_number:
+        description: "exact build number both halves must solve to (empty = whatever wins)"
+        default: ""
+      extra_specs:
+        description: "extra match specs forced into the solve, ';'-separated"
+        default: ""
+      consumer:
+        description: "consumer spec solved on top and imported; empty = none"
+        default: ""
+      consumer_channel:
+        description: "channel prepended for the consumer solve"
+        default: "https://comfy-forge.github.io/cuda-foundry"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # the gate proves the artifact LOADS, so the runner architecture must be
+    # the artifact's: aarch64 cells need an arm runner, not qemu
+    runs-on: ${{ inputs.platform == 'linux-aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      # inputs reach the shell only as environment variables (CWE-78)
+      IN_VERSION: ${{ inputs.version }}
+      IN_FLAVOUR: ${{ inputs.flavour }}
+      IN_PYTHON: ${{ inputs.python }}
+      IN_PLATFORM: ${{ inputs.platform }}
+      IN_BUILD_NUMBER: ${{ inputs.build_number }}
+      IN_EXTRA_SPECS: ${{ inputs.extra_specs }}
+      IN_CONSUMER: ${{ inputs.consumer }}
+      IN_CONSUMER_CHANNEL: ${{ inputs.consumer_channel }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.79.0
+          run-install: false
+
+      - name: Clean-environment gate (solve, resolve every soname, import torch)
+        run: |
+          set -euo pipefail
+          cuda="${IN_FLAVOUR#cu}"; cuda="${cuda%?}.${cuda: -1}"     # cu130 -> 13.0
+          pytag="py${IN_PYTHON/./}"
+          args=(--workdir "$RUNNER_TEMP/gate" --python "$IN_PYTHON" --cuda "$cuda"
+                --platform "$IN_PLATFORM"
+                --json "$RUNNER_TEMP/gate/elf-audit.json"
+                --spec "pytorch ==$IN_VERSION cuda${IN_FLAVOUR#cu}_repack_${pytag}_*"
+                -c https://comfy-forge.github.io/conda-torch -c conda-forge)
+          [ -z "$IN_BUILD_NUMBER" ] || args+=(--expect-build "$IN_BUILD_NUMBER")
+          if [ -n "$IN_EXTRA_SPECS" ]; then
+            IFS=';' read -ra extra <<< "$IN_EXTRA_SPECS"
+            for s in "${extra[@]}"; do args+=(--spec "$s"); done
+          fi
+          if [ -n "$IN_CONSUMER" ]; then
+            args+=(--consumer "$IN_CONSUMER" --consumer-channel "$IN_CONSUMER_CHANNEL")
+          fi
+          mkdir -p "$RUNNER_TEMP/gate"
+          python3 tools/linux_gate.py "${args[@]}"
+
+      - name: Keep the soname resolution map
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: elf-audit-${{ inputs.platform }}-${{ inputs.version }}-${{ inputs.flavour }}-py${{ inputs.python }}
+          path: ${{ runner.temp }}/gate/elf-audit.json
+          if-no-files-found: ignore
+          retention-days: 14
