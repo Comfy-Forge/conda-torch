@@ -150,6 +150,18 @@ Non-negotiables, each one empirically earned:
   the win-64 clean-environment gate (see above); `win-clean-import.yml`
   runs it against the live channel for any cell, optionally with
   consumer-style pins and a consumer package solved on top.
+- `tools/linux_gate.py` — the linux twin: solve a published repack from the
+  live channel into a fresh env on a runner of the **target architecture**
+  (`ubuntu-24.04-arm` for linux-aarch64), resolve every `DT_NEEDED` soname
+  the way the loader does, then `import torch`, a CPU matmul, an `nn`
+  forward and `torch.cuda.is_available()`. Dispatch-only
+  (`linux-clean-import.yml`), not in the publish path. It exists because
+  linux repacks are assembled on an x86 runner out of a wheel and never
+  loaded by the pipeline; on linux-aarch64 that meant no repack had ever
+  been imported in a clean environment anywhere until 2026-09-13. Only two
+  classes of unresolved soname are tolerated, and both are named in the
+  log: the driver's (`libcuda.so.1`, `libnvidia-ml.so.1`) and one needed
+  solely by nvshmem's dlopen'd bootstrap/transport plugins.
 
 ## Channel status (2026-09-02)
 
@@ -169,6 +181,13 @@ Known caveats, named rather than hidden:
   Mirrored for the record, effectively dead upstream-wide.
 - **2.10.0/2.11.0/2.12.1 cu129 linux-aarch64**: same conda-forge bitrot, but
   PyPI wheels exist — `cuda129_repack` builds cover these cells.
+- **linux-aarch64 is repack-complete as of 2026-09-13**: every aarch64 wheel
+  PyPI publishes inside the policy window has a `_repack_` build here (the
+  per-cell enumeration is the aarch64 section of `grid/README.md`). Cells
+  where conda-forge also has a build now carry BOTH, and the mirror's much
+  higher build number still wins an unpinned solve — pin
+  `pytorch * cuda<NNN>_repack_*` when you want the repack. For cu129 the
+  mirror is the bitrotted one above, so pinning matters there.
 - **py3.15 records** exist but cannot solve until conda-forge ships python
   3.15 (self-heals; final lands next month).
 - **2.11.0 cu128 / 2.13.0 cu129**: use the `_1` builds (build-number

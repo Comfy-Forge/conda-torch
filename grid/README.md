@@ -50,7 +50,36 @@ window (torch >= 2.4, cu124+, latest patch per (flavour, minor line), freethread
 excluded), diffed against this channel's `linux-aarch64` repodata counting **`_repack_`
 builds only** — a conda-forge mirror in the same cell does not count as coverage.
 
-<!-- AARCH64-TABLE -->
+| flavour | torch | PyPI aarch64 wheels (cp) | already repacked | newly published | still missing / failed |
+|---|---|---|---|---|---|
+| cu124 | 2.4.1 | 3.8 3.9 3.10 3.11 3.12 | 3.8 3.9 3.10 3.11 3.12 | — | — |
+| cu124 | 2.5.1 | 3.9 3.10 3.11 3.12 | 3.9 3.10 3.11 3.12 | — | — |
+| cu126 | 2.6.0 | 3.9 3.10 3.11 3.12 3.13 | — | 3.9 3.10 3.11 3.12 3.13 | — |
+| cu126 | 2.9.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu126 | 2.10.0 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu126 | 2.11.0 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu126 | 2.12.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu126 | 2.13.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.10 3.11 3.12 3.13 3.14 3.15 | — | — |
+| cu126 | 2.14.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.10 3.11 3.12 3.13 3.14 3.15 | — | — |
+| cu128 | 2.7.1 | 3.9 3.10 3.11 3.12 3.13 | 3.9 3.10 3.11 3.12 3.13 | — | — |
+| cu128 | 2.9.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu128 | 2.10.0 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu128 | 2.11.0 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu129 | 2.8.0 | 3.9 3.10 3.11 3.12 3.13 | 3.9 | 3.10 3.11 3.12 3.13 | — |
+| cu129 | 2.9.1 | 3.10 3.11 3.12 3.13 3.14 | 3.14 | 3.10 3.11 3.12 3.13 | — |
+| cu129 | 2.10.0 | 3.10 3.11 3.12 3.13 3.14 | 3.11 3.13 | 3.10 3.12 3.14 | — |
+| cu129 | 2.11.0 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu129 | 2.12.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu129 | 2.13.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.15 | 3.10 3.11 3.12 3.13 3.14 | — |
+| cu130 | 2.9.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu130 | 2.10.0 | 3.10 3.11 3.12 3.13 3.14 | — | 3.10 3.11 3.12 3.13 3.14 | — |
+| cu130 | 2.11.0 | 3.10 3.11 3.12 3.13 3.14 | — | 3.10 3.11 3.12 3.13 3.14 | — |
+| cu130 | 2.12.1 | 3.10 3.11 3.12 3.13 3.14 | — | 3.10 3.11 3.12 3.13 3.14 | — |
+| cu130 | 2.13.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.15 | 3.10 3.11 3.12 3.13 3.14 | — |
+| cu130 | 2.14.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.10 3.11 3.12 3.13 3.14 3.15 | — | — |
+| cu132 | 2.12.1 | 3.10 3.11 3.12 3.13 3.14 | 3.10 3.11 3.12 3.13 3.14 | — | — |
+| cu132 | 2.13.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.10 3.11 3.12 3.13 3.14 3.15 | — | — |
+| cu132 | 2.14.0 | 3.10 3.11 3.12 3.13 3.14 3.15 | 3.10 3.11 3.12 3.13 3.14 3.15 | — | — |
 
 Reading notes:
 
@@ -72,6 +101,13 @@ Reading notes:
 - aarch64 holes re-verified against the live indexes on 2026-09-13: PyPI still publishes no
   aarch64 wheel for cu124 2.6.0, cu126 2.8.0, or cu128 2.8.0 / 2.12.1 / 2.13.0. The five
   aarch64 rows of the hole table below stand.
+- Every line touched in this pass was additionally **imported in a clean
+  environment on a real arm64 runner** (`linux-clean-import.yml`, one python
+  per line): cu126 2.6.0 py3.12, cu129 2.8.0 py3.13 / 2.9.1 py3.12 /
+  2.10.0 py3.12 / 2.13.0 py3.13, cu130 2.10.0 py3.13 / 2.11.0 py3.12 and
+  py3.13 / 2.12.1 py3.13 / 2.13.0 py3.13. Solve from the live channel, every
+  `DT_NEEDED` soname resolved, `import torch` + CPU matmul + `nn` forward +
+  `torch.cuda.is_available()` (False, correctly, on a GPU-less runner).
 - The sleef gate's three-way branch is load-bearing on this subdir and both branches are
   live: cu124 2.4.1/2.5.1 reference no `Sleef_*` symbol at all (NVPL/ACL math) and ship
   neither the redirect nor the dependency, while the cu130 2.11.0 build repacked in this
