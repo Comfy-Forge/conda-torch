@@ -194,6 +194,17 @@ Known caveats, named rather than hidden:
   tiebreaker picks them automatically); `_0` pinned a libcudnn that
   conda-forge only built for CUDA 13 and can never install. The channel
   carries `nvidia-cudnn` side-repacks for these.
+- **nvshmem's MPI bootstrap plugin is inert in every published
+  `nvidia-nvshmem` repack** (both linux subdirs). `NVSHMEM_OK_NEEDED` was an
+  unanchored prefix match, so `libm` accepted `libmpi.so.40` and
+  `nvshmem_bootstrap_mpi.so.3` was shipped instead of being dropped like the
+  other plugins whose dependencies conda cannot supply. It dlopens to nothing
+  unless an MPI runtime happens to be in the env, which is why it never
+  surfaced; nvshmem tolerates an absent bootstrap by design. The matcher is
+  fixed (2026-09-13), forward-only: the plugin disappears at the next
+  `side_build_number` bump. Whether to drop it or to keep it deliberately —
+  conda-forge does ship an `openmpi` that would satisfy it — is an open
+  decision, so no rebuild was forced.
 - Strict-channel-priority rule for maintainers: any package *name* this
   channel carries must be carried completely (every version any dependent
   pins) — one partial name shadows all of conda-forge's copies.

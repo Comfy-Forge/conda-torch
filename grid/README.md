@@ -108,6 +108,11 @@ Reading notes:
   py3.13 / 2.12.1 py3.13 / 2.13.0 py3.13. Solve from the live channel, every
   `DT_NEEDED` soname resolved, `import torch` + CPU matmul + `nn` forward +
   `torch.cuda.is_available()` (False, correctly, on a GPU-less runner).
+- `tools/sweep_solve.py --only linux-aarch64` (live channel, this box,
+  2026-09-13): **30/31 entries solve**, each landing on a build served from
+  this channel's own release URL. The one exception is 2.7.1 cu129, the cell
+  that is dead upstream-wide (no PyPI wheel, conda-forge's mirror
+  unsatisfiable since their libcudss migration) — unchanged by this pass.
 - The sleef gate's three-way branch is load-bearing on this subdir and both branches are
   live: cu124 2.4.1/2.5.1 reference no `Sleef_*` symbol at all (NVPL/ACL math) and ship
   neither the redirect nor the dependency, while the cu130 2.11.0 build repacked in this
